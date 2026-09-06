@@ -29,7 +29,26 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 	for {
 		healthFail := make(chan error, 1)
 		healthKick := make(chan struct{}, 1)
-		go s.healthLoop(cur.ctx, port, s.livenessFronts(conn), healthFail, healthKick)
+		probe := s.healthProber()
+		if cur.mobileRun != nil {
+			run := cur
+			probe = func(ctx context.Context, _ int) error {
+				_, err := s.verifyMobilePath(ctx, run, VerificationHealth)
+				return err
+			}
+		}
+		if cur.mobileRun != nil {
+			done := make(chan struct{})
+			cur.healthDone = done
+			run := cur
+			fronts := s.livenessFronts(conn)
+			go func() {
+				defer close(done)
+				s.healthLoopWithProbe(run.ctx, port, fronts, healthFail, healthKick, probe, run.reporter)
+			}()
+		} else {
+			go s.healthLoopWithProbe(cur.ctx, port, s.livenessFronts(conn), healthFail, healthKick, probe, nil)
+		}
 
 		var trigger error
 		var triggerReason string
@@ -83,6 +102,9 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 			case probeErr := <-healthFail:
 				if ctx.Err() != nil || s.isDisconnecting(conn) {
 					return "", nil
+				}
+				if stage, local := localCandidateErrorStage(probeErr); local {
+					return stage, probeErr
 				}
 				if cur.accessTransport == accessTransportWSS {
 					// A live WSS socket can still have a blackholed CDN data path.
@@ -344,19 +366,32 @@ func (s *Engine) reladder(ctx context.Context, conn *connection, port int, targe
 // network epoch a direct path may have survived), and each sweep holds while
 // the engine is paused — resuming runs the held sweep right away.
 func (s *Engine) healthLoop(ctx context.Context, port int, fronts []string, failCh chan<- error, kick <-chan struct{}) {
+	s.healthLoopWithProbe(ctx, port, fronts, failCh, kick, s.healthProber(), nil)
+}
+
+func (s *Engine) healthLoopWithProbe(ctx context.Context, port int, fronts []string, failCh chan<- error, kick <-chan struct{}, probe func(context.Context, int) error, reporter *RunTelemetry) {
 	base := s.healthTick
 	if base <= 0 {
 		base = HealthProbeInterval
 	}
-	timer := time.NewTimer(jitter(base))
+	nextDelay := func() time.Duration { return jitter(base) }
+	cadence := mobileProbeCadence{base: base, allowance: base}
+	if reporter != nil {
+		nextDelay = func() time.Duration { return base*5/6 + time.Duration(rand.Int63n(int64(base/3)+1)) }
+		cadence.sent, cadence.received, cadence.sampled = reporter.traffic()
+	}
+	pass := nextDelay()
+	timer := time.NewTimer(pass)
 	defer timer.Stop()
 	failures := 0
 	for {
+		forced := false
 		select {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
 		case <-kick:
+			forced = true
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -372,16 +407,37 @@ func (s *Engine) healthLoop(ctx context.Context, port int, fronts []string, fail
 		// the next one fire back to back on resume — two probe failures in
 		// one instant against a three-failure threshold calibrated to demand
 		// ~90s of evidence.
-		timer.Reset(jitter(base))
+		elapsed := pass
+		pass = nextDelay()
+		timer.Reset(pass)
+		if reporter != nil {
+			sent, received, present := reporter.traffic()
+			if !cadence.due(elapsed, sent, received, present, failures, forced) {
+				continue
+			}
+		}
 
-		err := s.healthProber()(ctx, port)
+		err := probe(ctx, port)
 		if err == nil {
+			if reporter != nil {
+				cadence.healthy()
+			}
 			failures = 0
 			s.notify(Notice{Kind: NoticeHealthProbe, Threshold: HealthFailureThreshold})
 			continue
 		}
 		if ctx.Err() != nil {
 			return
+		}
+		if _, local := localCandidateErrorStage(err); local {
+			select {
+			case failCh <- err:
+			default:
+			}
+			return
+		}
+		if reporter != nil {
+			cadence.failed()
 		}
 		failures++
 		// The internal count keeps growing during a prolonged local outage;
@@ -398,7 +454,7 @@ func (s *Engine) healthLoop(ctx context.Context, port int, fronts []string, fail
 		// failover for good. Fail over instead; the recovery pass tears the TUN
 		// down first, which is also what restores the normal network if the
 		// outage turns out to be local.
-		if !s.tunMode() && !s.networkAlive(ctx, fronts) {
+		if (!s.tunMode() || s.Mobile != nil) && !s.networkAlive(ctx, fronts) {
 			if ctx.Err() != nil {
 				return
 			}

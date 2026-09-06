@@ -35,17 +35,21 @@ type Session struct {
 // single foreground session, so events are flushed on success, on each
 // heartbeat, and on shutdown rather than persisted to disk.
 type Manager struct {
-	mu            sync.Mutex
-	session       *Session
-	outbox        []Event
-	store         *Outbox
-	poster        HTTPClient
-	appVersion    string
-	clientID      string
-	platformLabel string
-	geo           map[string]string
-	traffic       TrafficCounters
-	now           func() time.Time
+	hostIdentity   bool
+	hostAttributes func() map[string]string
+	statsMu        sync.Mutex
+	sent, received int64
+	mu             sync.Mutex
+	session        *Session
+	outbox         []Event
+	store          *Outbox
+	poster         HTTPClient
+	appVersion     string
+	clientID       string
+	platformLabel  string
+	geo            map[string]string
+	traffic        TrafficCounters
+	now            func() time.Time
 }
 
 // TrafficCounters reports the session's cumulative tunneled traffic in bytes:
@@ -130,6 +134,9 @@ func (m *Manager) BeginSession() (*Session, error) {
 		StartedAt: m.now(),
 	}
 	m.session = session
+	m.statsMu.Lock()
+	m.sent, m.received = 0, 0
+	m.statsMu.Unlock()
 	copied := *session
 	return &copied, nil
 }
@@ -214,6 +221,7 @@ func (m *Manager) Record(event, relayID string, attrs map[string]string, meas ma
 	if m == nil {
 		return
 	}
+	host := m.attributes()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.session == nil {
@@ -228,6 +236,10 @@ func (m *Manager) Record(event, relayID string, attrs map[string]string, meas ma
 		merged[k] = v
 	}
 	for k, v := range attrs {
+		merged[k] = v
+	}
+
+	for k, v := range host {
 		merged[k] = v
 	}
 
@@ -323,8 +335,10 @@ func (m *Manager) Heartbeat(ctx context.Context) error {
 	if m == nil {
 		return nil
 	}
+	host := m.attributes()
 	m.mu.Lock()
-	heartbeat, ok := m.buildHeartbeatLocked()
+	heartbeat, ok := m.buildHeartbeatLocked(host)
+	poster := m.poster
 	if !ok {
 		m.mu.Unlock()
 		return nil
@@ -343,7 +357,7 @@ func (m *Manager) Heartbeat(ctx context.Context) error {
 		// only when it matches the heartbeat's own identity, so a historical
 		// backlog never delays the cadence. The remainder drains through
 		// Flush afterwards.
-		if _, _, err := store.SendHeartbeat(ctx, m.poster.BaseURL, heartbeat); err != nil {
+		if _, _, err := store.SendHeartbeat(ctx, poster.BaseURL, heartbeat); err != nil {
 			return err
 		}
 		return m.Flush(ctx)
@@ -351,7 +365,7 @@ func (m *Manager) Heartbeat(ctx context.Context) error {
 	queued := m.snapshotLocked(uploadBatchSize - 1)
 	m.mu.Unlock()
 
-	if err := m.poster.Send(ctx, append(queued, heartbeat)); err != nil {
+	if err := poster.Send(ctx, append(queued, heartbeat)); err != nil {
 		return err
 	}
 	if len(queued) > 0 {
@@ -368,6 +382,7 @@ func (m *Manager) Flush(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	store := m.store
+	poster := m.poster
 	m.mu.Unlock()
 	if store != nil {
 	storeDrain:
@@ -375,7 +390,7 @@ func (m *Manager) Flush(ctx context.Context) error {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			_, pending, err := store.FlushNextBatch(ctx, m.poster.BaseURL)
+			_, pending, err := store.FlushNextBatch(ctx, poster.BaseURL)
 			switch {
 			case errors.Is(err, ErrOutboxUnavailable):
 				// The store is not ours this operation (locked out, unreadable);
@@ -398,7 +413,7 @@ func (m *Manager) Flush(ctx context.Context) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := m.poster.Send(ctx, batch); err != nil {
+		if err := poster.Send(ctx, batch); err != nil {
 			return err
 		}
 		m.removeSent(batch)
@@ -441,7 +456,7 @@ func (m *Manager) RunHeartbeatLoopGated(ctx context.Context, interval time.Durat
 	}
 }
 
-func (m *Manager) buildHeartbeatLocked() (Event, bool) {
+func (m *Manager) buildHeartbeatLocked(hosts ...map[string]string) (Event, bool) {
 	if m.session == nil || m.session.RelayID == "" || m.session.ConnectedAt.IsZero() {
 		return Event{}, false
 	}
@@ -456,6 +471,11 @@ func (m *Manager) buildHeartbeatLocked() (Event, bool) {
 	}
 	for k, v := range m.geo {
 		attrs[k] = v
+	}
+	for _, host := range hosts {
+		for k, v := range host {
+			attrs[k] = v
+		}
 	}
 	attrs["connection_state"] = "connected"
 	meas := map[string]int64{
@@ -501,6 +521,25 @@ func (m *Manager) enqueueLocked(event Event) {
 
 // snapshotLocked returns a copy of up to limit leading outbox events.
 func (m *Manager) snapshotLocked(limit int) []Event {
+	if m.hostIdentity {
+		// A temporarily unavailable borrowed outbox must not make reduced
+		// mobile counts exceed the broker budget through the memory fallback.
+		batch, oversized := outboxUploadBatch(m.outbox, limit, outboxBatchByteBudget)
+		if len(oversized) > 0 {
+			ids := make(map[string]bool, len(oversized))
+			for _, event := range oversized {
+				ids[event.EventID] = true
+			}
+			kept := m.outbox[:0]
+			for _, event := range m.outbox {
+				if !ids[event.EventID] {
+					kept = append(kept, event)
+				}
+			}
+			m.outbox = kept
+		}
+		return batch
+	}
 	n := len(m.outbox)
 	if n > limit {
 		n = limit

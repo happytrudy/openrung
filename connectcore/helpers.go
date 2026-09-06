@@ -23,12 +23,16 @@ func (s *Engine) newManager(brokerURL string) *clienttelemetry.Manager {
 		brokerURL = TelemetryBrokerURL
 	}
 	platform := s.telemetryPlatform()
-	mgr, err := clienttelemetry.NewWithPlatform(
-		brokerURL,
-		client.AppVersion(),
-		platform,
-		s.brokerHTTPClient(),
-	)
+	var mgr *clienttelemetry.Manager
+	var err error
+	if s.Mobile != nil {
+		mgr, err = clienttelemetry.NewWithIdentity(brokerURL, s.appVersion(), platform, s.platformVersion(), s.Mobile.InstallID, s.brokerHTTPClient())
+		if mgr != nil {
+			mgr.SetHostAttributes(s.mobileAttributes)
+		}
+	} else {
+		mgr, err = clienttelemetry.NewWithPlatform(brokerURL, s.appVersion(), platform, s.brokerHTTPClient())
+	}
 	if err != nil {
 		return nil
 	}
@@ -53,6 +57,9 @@ const telemetryOutboxFileName = "openrung-telemetry-outbox.jsonl"
 // engine's lifetime. Nil when the host set no directory or the open failed —
 // telemetry then stays on the in-memory queue, and must never fail a connect.
 func (s *Engine) telemetryOutbox() *clienttelemetry.Outbox {
+	if s.Mobile != nil {
+		return s.Mobile.Outbox
+	}
 	if s.TelemetryOutboxDirectory == "" {
 		return nil
 	}
@@ -341,7 +348,7 @@ func prependRecent(existing []RecentNode, node RecentNode, max int) []RecentNode
 	out := make([]RecentNode, 0, len(existing)+1)
 	out = append(out, node)
 	for _, r := range existing {
-		if r.CountryCode == node.CountryCode {
+		if (node.RelayID == "" && r.CountryCode == node.CountryCode) || (node.RelayID != "" && (r.RelayID == node.RelayID || (r.RelayID == "" && r.CountryCode == node.CountryCode))) {
 			continue
 		}
 		out = append(out, r)
