@@ -216,7 +216,8 @@ func (m *Manager) MarkConnected(relayID string) {
 }
 
 // Record enqueues a telemetry event for the active session. Device attributes
-// are merged in first so caller-supplied attributes win on conflict.
+// and host metadata are merged first so caller-supplied attributes win, except
+// host app_version, platform, engine and engine_version identify the release.
 func (m *Manager) Record(event, relayID string, attrs map[string]string, meas map[string]int64) {
 	if m == nil {
 		return
@@ -235,12 +236,16 @@ func (m *Manager) Record(event, relayID string, attrs map[string]string, meas ma
 	for k, v := range m.geo {
 		merged[k] = v
 	}
+	for k, v := range host {
+		merged[k] = v
+	}
 	for k, v := range attrs {
 		merged[k] = v
 	}
-
-	for k, v := range host {
-		merged[k] = v
+	for _, key := range []string{"app_version", "platform", "engine", "engine_version"} {
+		if value, ok := host[key]; ok {
+			merged[key] = value
+		}
 	}
 
 	resolvedRelay := relayID

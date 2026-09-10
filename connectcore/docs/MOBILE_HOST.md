@@ -20,13 +20,13 @@ A4 sequence vectors and their versions are unchanged.
 | --- | --- | --- |
 | `net/SingBoxConfiguration.kt`, `vpn/OpenRungVpnService.currentSplitTunnelRules`, `Shared/SingBoxConfiguration.swift` | Builder already has the mobile superset; Engine did not pass it. `MobileHost.Settings` supplies TUN addresses, MTU, resolvers, priority probe suffixes, split rules/packages, find-process, Clash accounting and log level. Engine fixes DoH shape and retains relay/bridge ownership. Settings refresh before each direct and WSS candidate, including recovery. | `CandidateConfigurationParityAndRefresh` (direct, punch, WSS; independent config/priority assertions), `StatusAcrossRecoverySwitchAndTeardown` |
 | `ensureLocalTunnelPreconditions` | Core only built config after TCP reachability. `MobileRuntime.Preflight` validates direct **and** protected bridge graphs before TCP or tickets; `Settings` checks effective platform permission/availability. | `PreflightBlocksRemoteFailureAndTickets`, `MissingConfigurationFailsBeforeDiscovery` |
-| `vpn/TunnelStartupGuard.kt`, both `StartupPathVerification` files | Desktop readiness was fixed/private. Each `MobileTunnelRun.WaitReady` and `VerifyPath` belongs to the fresh run; completion is guarded against cancellation and an already-observed engine exit. Unknown/local errors cannot authorize WSS. | `ReadinessMustPrecedeVerification`, `VerificationFailureClassificationAndStoppedTie`, `CancellationDuringReadinessAndVerification`, `StopDuringLaunchAndRetry`, `FailedLaunchRetiresReporterAndAllowsCleanRetry` |
+| `vpn/TunnelStartupGuard.kt`, both `StartupPathVerification` files | Desktop readiness was fixed/private. Each `MobileTunnelRun.WaitReady` and `VerifyPath` belongs to the fresh run; completion is guarded against cancellation and an already-observed engine exit. Unknown/local errors cannot authorize WSS. | `ReadinessMustPrecedeVerification`, `VerificationFailureClassificationAndStoppedTie`, `CancellationDuringReadinessAndVerification`, `ReadinessTimeoutMatchesDesktopAndPreservesCancellation`, `StopDuringLaunchAndRetry`, `FailedLaunchRetiresReporterAndAllowsCleanRetry` |
 | `net/TunnelPathProbe.kt`, `DnsProbe.kt`, `InternetProbe.kt`, `ProbeTargets.kt`, `PacketTunnel/PacketTunnelDnsProbe.swift`, `PacketTunnelInternetProbe.swift` | Ordinary desktop TUN HTTP cannot prove an iOS provider path. `TunnelPathEvidence` requires the correct platform transport plus fresh DNS and pinned HTTPS; incomplete/physical responses are local failures. A typed `RemotePathError` retains DNS versus HTTPS staging. | `VerificationRejectsPhysicalAndIncompleteEvidence`, `VerificationFailureClassificationAndStoppedTie`, `HealthUsesCurrentRunAndLocalFailuresDoNotRecover` |
-| Native `awaitTunnelHealthFailure` implementations | Mobile's traffic-aware cadence was absent. The shared loop now uses reported tunneled counters, 30 s ±1/6 ticks, healthy exponential allowance capped at 5 min, fast probes for uplink without reply or consecutive failure, and immediate network-epoch checks. Protected physical liveness gates remote recovery in mobile TUN mode. | `HealthCadenceMatchesShippingTrafficBudget`, `HealthUsesCurrentRunAndLocalFailuresDoNotRecover`; existing network/lifecycle tests |
+| Native `awaitTunnelHealthFailure` implementations | Mobile's traffic-aware cadence was absent. The shared loop now uses reported tunneled counters, 30 s ±1/6 ticks, healthy exponential allowance capped at 5 min, fast probes for uplink without reply or consecutive failure, and immediate network-epoch checks. Protected physical liveness gates remote recovery in mobile TUN mode. | `HealthCadenceMatchesShippingTrafficBudget`, `HealthUsesCurrentRunAndLocalFailuresDoNotRecover`, `HealthClassificationMatchesShippingThreshold`; existing network/lifecycle tests |
 | `telemetry/ClientIdentity.kt`, `Shared/ClientIdentity.swift`, `OpenRungVpnModule.getIdentity` | Filesystem identity was hardwired. `MobileHost.InstallID` and `Engine.InstallID()` preserve the existing UUID verbatim without HOME/XDG changes. Discovery, WSS tickets, telemetry use the same identity, app version and platform version; mobile telemetry follows the verified discovery winner. | `WireIdentityForDiscoveryTicketsAndTelemetry`, `TelemetryFollowsWinningDiscoveryFront`, `IdentityTelemetryOwnershipAndRestart` |
 | Both `TelemetryManager` files, `telemetry/NativeTelemetryOutbox.kt`, `android/punchbridge/telemetry_binding.go` | Existing `clienttelemetry.Outbox` already owns migration/fsync/repair/locking/batching. `MobileHost.Outbox` borrows that exact process-owned instance; Engine owns sessions/heartbeats/uploads. Existing `EnqueueBatch` is the supported durable migration acknowledgement. | `BorrowedOutboxKeepsSingleLockAndLegacyCopy`, `IdentityTelemetryOwnershipAndRestart`; existing `clienttelemetry/outbox*_test.go` durability/cancellation suites |
 | `ApplicationConnectionAggregator.kt`, native libbox counters | `RunTelemetry` accepts reduced attributed counts and cumulative counters, retires stale runs and captures final Stop samples. Counts are chunked and use shared per-app batching even in the unavailable-store memory fallback. | `ReducedCountsSurviveUnavailableStoreFallback`, `IdentityTelemetryOwnershipAndRestart`, `HeartbeatMetadataAndTraffic`, `StatusAcrossRecoverySwitchAndTeardown` |
-| Native platform/device metadata and ADR Track C | `MobileHost.Attributes` supplies current native metadata; protected `app_version`, `platform`, `engine=connectcore`, `engine_version`, and OS labels identify releases. Metadata is sampled outside engine/manager locks. No global app-version mutation is needed. | `HeartbeatMetadataAndTraffic`, `IdentityTelemetryOwnershipAndRestart`, `WireIdentityForDiscoveryTicketsAndTelemetry` |
+| Native platform/device metadata and ADR Track C | `MobileHost.Attributes` supplies current native metadata; protected `app_version`, `platform`, `engine=connectcore`, and `engine_version` identify releases. Other host metadata yields to event attributes on conflict. Metadata is sampled outside engine/manager locks. No global app-version mutation is needed. | `HeartbeatMetadataAndTraffic`, `IdentityTelemetryOwnershipAndRestart`, `WireIdentityForDiscoveryTicketsAndTelemetry`; `clienttelemetry.TestRecordEventAttributesWinExceptReleaseIdentity` |
 | `state/OpenRungStatusStore.kt`, `model/RecentNode.kt`, RN contract | `ActiveConnectionInfo` already exists but cannot be called in a synchronous sink. `State.Details` atomically carries session and credential-free relay ID/name/effective class/transport/front; `RecentNode` adds relay ID/name and mobile deduplicates by relay (including legacy country entries). | `StatusAcrossRecoverySwitchAndTeardown`, `StateRemainsAtomicDuringSlowTeardown` |
 
 ## Binding handoff
@@ -88,6 +88,22 @@ wrapper: an observed local stop wins over a simultaneous remote-looking result.
 Engine also rechecks Done before accepting the completed mobile probe result.
 Do not retain the native ladder, health scheduler or ticket/recovery policy.
 
+Health classification is deliberately strict, matching Android
+`OpenRungVpnService.awaitTunnelHealthFailure` and iOS
+`PacketTunnelProvider.awaitTunnelHealthFailure`: both immediately throw a local
+error when `isGenuineRemoteDataPathFailure` rejects the native error. One unknown
+exception, bare inner timeout, misspelled `RemotePathError.Stage`, or incomplete
+path attestation therefore terminates the session as FAILED without recovery.
+Only recognized remote DNS/HTTPS errors get three consecutive failures, reset by
+a successful sweep, followed by the physical-network liveness gate. B2/B3 must
+translate native allow-listed inner probe timeouts into `RemotePathError` with the
+actual stage, rather than passing exception strings. Supplied-context cancellation
+remains cancellation. This differs deliberately from desktop's generic health
+error gate; it prevents lost native classification from authorizing recovery.
+The engine's own readiness budget uses desktop's “tunnel did not become ready in
+time” error and classification; parent cancellation/deadlines retain their
+context error identity.
+
 `RunTelemetry.UpdateTraffic` receives cumulative tunnel bytes; it keeps the
 shipping session high-water semantics through counter resets, and Engine uses
 run-local samples for the shared adaptive health cadence. It does **not** sum
@@ -116,6 +132,16 @@ owner. Use `SetSocketProtector`, `SetDNSServers`, `UpdateNetworkState`,
 while running. Mobile teardown cancels/joins each run’s health worker; Shutdown also joins the heartbeat before final session
 records, then honors the existing bounded terminal-flush contract. Pause does
 not pause the data plane; that remains OS/libbox lifecycle work.
+
+Mobile recents retain two distinct relays in the same country. At the audited
+mobile main `53e03d9`, `src/components/RecentsSection.tsx` already keys pills by
+`relayId`, selects the exact relay, and hides unpinned legacy entries; the native
+mock also deduplicates pinned entries by relay. Core replaces an old unpinned
+country entry when adding a pin, while desktop keeps country-only deduplication.
+B2 must confirm that the target RN/map integration preserves both same-country
+pins and selects the intended relay; country-grouped map markers must not become
+the identity of the recent list. This remains a UI acceptance check, not a mobile
+UI change in this PR.
 
 ## Outbox migration ordering
 
@@ -157,8 +183,10 @@ not pause the data plane; that remains OS/libbox lifecycle work.
 - Unknown readiness/path/provider errors fail locally; only explicitly classified
   remote DNS/HTTPS failures authorize fallback. This preserves native startup
   and active-health classification rather than desktop's generic probe errors.
+  During health, one unclassified error immediately fails the session; native
+  adapters must preserve recognized remote timeout/stage types across the binding.
 - Shared mobile health now preserves native traffic backoff and three-failure
-  gating. Physical liveness uses Engine's already-protected broker-front dials
+  gating for classified remote failures only. Physical liveness uses Engine's already-protected broker-front dials
   instead of native network enumeration/NWPath alone; a network epoch forces an
   immediate through-tunnel check. Neither is tunnel readiness evidence.
 - Engine keeps its A4 single session across automatic recovery and its ranked,

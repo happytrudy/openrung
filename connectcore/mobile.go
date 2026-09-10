@@ -77,7 +77,11 @@ type MobileRuntime interface {
 // physical-network HTTP client. Return evidence only after both stages pass.
 //
 // Methods honor cancellation and must finish when ctx ends. Unknown errors are
-// LOCAL. Only a classified remote path failure may return *RemotePathError.
+// LOCAL, including during health checks: one such failure terminates the session
+// without recovery. This matches shipping awaitTunnelHealthFailure on both OSes.
+// Only a classified remote path failure may return *RemotePathError; health
+// applies the three-failure gate only to these errors. Adapters must preserve
+// classification, including inner probe timeouts, rather than stringify errors.
 // Stop joins platform callbacks and reports final counters before it returns;
 // the reporter is retired afterwards. No callback may reenter Engine from Sink.
 type MobileTunnelRun interface {
@@ -112,6 +116,9 @@ type TunnelPathEvidence struct {
 // RemotePathError is the binding's allow-listed remote DNS/HTTPS failure. Stage
 // must be "dns_probe" or "internet_probe". Permission, unavailable VPN Network,
 // invalid provider/API state, engine stop and cancellation are never remote.
+// An unknown stage or a bare timeout is local, even in VerificationHealth.
+// Wrap a shipping allow-listed probe timeout here with its actual DNS/HTTPS stage;
+// propagate cancellation of the supplied context unchanged instead.
 type RemotePathError struct {
 	Stage string
 	Err   error
@@ -293,12 +300,20 @@ func (s *Engine) awaitMobileReady(ctx context.Context, res *candidateResult) (in
 	started := time.Now()
 	readyCtx, cancel := context.WithTimeout(ctx, s.readyLimit())
 	defer cancel()
+	readyError := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Match desktop's readiness budget error and telemetry classification;
+		// parent cancellation/deadlines retain their context identity above.
+		return errors.New("tunnel did not become ready in time")
+	}
 	done := make(chan error, 1)
 	go func() { done <- res.mobileRun.WaitReady(readyCtx) }()
 	select {
 	case err := <-done:
 		if readyCtx.Err() != nil {
-			return 0, readyCtx.Err()
+			return 0, readyError()
 		}
 		select {
 		case stopped := <-res.runDone:
@@ -320,7 +335,7 @@ func (s *Engine) awaitMobileReady(ctx context.Context, res *candidateResult) (in
 		}
 		return 0, err
 	case <-readyCtx.Done():
-		return 0, readyCtx.Err()
+		return 0, readyError()
 	}
 }
 

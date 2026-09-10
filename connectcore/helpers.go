@@ -341,14 +341,20 @@ func (s *Engine) persistPrepend(existing []RecentNode, node RecentNode) []Recent
 	return recents
 }
 
-// prependRecent inserts node at the front, de-duplicated by countryCode, capped
-// at max (matching the contract's cap-8 newest-first recents). It returns the
-// new list so the caller can mirror it into state.
+// prependRecent inserts node at the front, capped at max. Pinned mobile entries
+// replace the same relay or a legacy entry for that country. Unpinned desktop
+// entries retain country deduplication. The caller mirrors the result into state.
 func prependRecent(existing []RecentNode, node RecentNode, max int) []RecentNode {
 	out := make([]RecentNode, 0, len(existing)+1)
 	out = append(out, node)
 	for _, r := range existing {
-		if (node.RelayID == "" && r.CountryCode == node.CountryCode) || (node.RelayID != "" && (r.RelayID == node.RelayID || (r.RelayID == "" && r.CountryCode == node.CountryCode))) {
+		replaced := r.CountryCode == node.CountryCode
+		if node.RelayID != "" {
+			sameRelay := r.RelayID == node.RelayID
+			legacyCountry := r.RelayID == "" && r.CountryCode == node.CountryCode
+			replaced = sameRelay || legacyCountry
+		}
+		if replaced {
 			continue
 		}
 		out = append(out, r)

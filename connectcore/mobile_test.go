@@ -1034,3 +1034,109 @@ func TestMobileTelemetryFollowsWinningDiscoveryFront(t *testing.T) {
 		t.Fatal("mobile backlog did not follow winning front")
 	}
 }
+
+// Both shipping awaitTunnelHealthFailure implementations terminate immediately
+// unless isGenuineRemoteDataPathFailure recognizes the native error. An adapter
+// must translate that classification before crossing the Go boundary.
+func TestMobileHealthClassificationMatchesShippingThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		err       error
+		wantCalls int
+		local     bool
+		reset     bool
+		cancel    bool
+	}{
+		{name: "unclassified exception", err: errors.New("native exception"), wantCalls: 1, local: true},
+		{name: "bare inner timeout", err: context.DeadlineExceeded, wantCalls: 1, local: true},
+		{name: "unknown stage", err: &RemotePathError{Stage: "dns_prob", Err: context.DeadlineExceeded}, wantCalls: 1, local: true},
+		{name: "classified DNS timeout", err: &RemotePathError{Stage: "dns_probe", Err: context.DeadlineExceeded}, wantCalls: 3},
+		{name: "classified HTTPS timeout", err: &RemotePathError{Stage: "internet_probe", Err: context.DeadlineExceeded}, wantCalls: 3},
+		{name: "success resets threshold", err: &RemotePathError{Stage: "dns_probe", Err: context.DeadlineExceeded}, wantCalls: 6, reset: true},
+		{name: "cancellation", err: context.Canceled, wantCalls: 1, cancel: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := mobileTestEngine(t)
+			s.healthTick = time.Millisecond
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			calls := 0
+			run := newMobileTestRun(PathAndroidVPN)
+			run.verify = func(_ context.Context, phase VerificationPhase) (TunnelPathEvidence, error) {
+				if phase != VerificationHealth {
+					t.Fatal("wrong verification phase")
+				}
+				calls++
+				if tc.cancel {
+					cancel()
+				}
+				if tc.reset && calls == 3 {
+					return TunnelPathEvidence{Path: PathAndroidVPN, FreshDNS: true, PinnedHTTPS: true}, nil
+				}
+				return TunnelPathEvidence{}, tc.err
+			}
+			failures := make(chan error, 1)
+			s.healthLoopWithProbe(ctx, 0, nil, failures, nil, func(ctx context.Context, _ int) error {
+				_, err := s.verifyMobilePath(ctx, &candidateResult{mobileRun: run}, VerificationHealth)
+				return err
+			}, nil)
+			if calls != tc.wantCalls {
+				t.Fatalf("probe count %d, want %d", calls, tc.wantCalls)
+			}
+			select {
+			case err := <-failures:
+				_, local := localCandidateErrorStage(err)
+				if tc.cancel || local != tc.local {
+					t.Fatalf("unexpected terminal error: %v", err)
+				}
+			default:
+				if !tc.cancel {
+					t.Fatal("health loop did not report failure")
+				}
+			}
+		})
+	}
+}
+
+func TestMobileReadinessTimeoutMatchesDesktopAndPreservesCancellation(t *testing.T) {
+	for _, outcome := range []string{"readiness budget", "parent cancelled", "parent deadline"} {
+		t.Run(outcome, func(t *testing.T) {
+			s, _, _ := mobileTestEngine(t)
+			s.tunnelReadyLimit = time.Millisecond
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			switch outcome {
+			case "parent cancelled":
+				cancel()
+			case "parent deadline":
+				var deadlineCancel context.CancelFunc
+				ctx, deadlineCancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+				defer deadlineCancel()
+			}
+			run := newMobileTestRun(PathAndroidVPN)
+			joined := make(chan struct{})
+			run.ready = func(ctx context.Context) error {
+				defer close(joined)
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			_, err := s.awaitMobileReady(ctx, &candidateResult{mobileRun: run, runDone: run.Done()})
+			select {
+			case <-joined:
+			case <-time.After(time.Second):
+				t.Fatal("readiness callback did not observe cancellation")
+			}
+			if outcome != "readiness budget" {
+				if !errors.Is(err, ctx.Err()) {
+					t.Fatalf("lost parent context error: %v", err)
+				}
+				return
+			}
+			s.tunnelReady = func(context.Context, int) error { return errors.New("not ready") }
+			_, desktopErr := s.awaitTunnelReady(t.Context(), &candidateResult{}, 0)
+			if err == nil || err.Error() != desktopErr.Error() || clienttelemetry.ClassifyError(err) != clienttelemetry.ClassifyError(desktopErr) {
+				t.Fatalf("mobile timeout %v differs from desktop %v", err, desktopErr)
+			}
+		})
+	}
+}
