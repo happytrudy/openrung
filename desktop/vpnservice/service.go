@@ -295,7 +295,7 @@ func (s *Service) snapshotLocked() NativeVpnState {
 func (s *Service) nativeStateLocked(state connectcore.State) NativeVpnState {
 	recents := make([]RecentNode, 0, len(state.Recents))
 	for _, r := range state.Recents {
-		recents = append(recents, RecentNode(r))
+		recents = append(recents, RecentNode{CountryCode: r.CountryCode, Label: r.Label, Latitude: r.Latitude, Longitude: r.Longitude})
 	}
 	return NativeVpnState{
 		Status:     ConnectionStatus(state.Status),
