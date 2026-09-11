@@ -1,11 +1,13 @@
 # ADR-003 B2/B3 host prerequisites
 
-This is the core prerequisite for mobile cutover, not either platform cutover.
-Reviewed core main `77708e6` and mobile main `53e03d9` (including mobile #111
-and preparation #112). Expected module tag after merge: **connectcore/v0.6.0**.
-The `connectcore-tag` workflow creates it; no release-build source rewriting or
-manual tag is needed. The small CLI/desktop recent-node projections keep their
-existing wire/storage shapes; desktop's version is advanced to 0.1.6.
+The host APIs introduced in **connectcore/v0.6.0** support the B2/B3 mobile
+cutovers. The recovery and location corrections against core main `9f141a3`
+target **connectcore/v0.6.1** after merge. The `connectcore-tag` workflow creates
+the tag; no release-build source rewriting or manual tag is needed. CLI/desktop
+recent-node projections keep their existing wire/storage shapes.
+
+The original prerequisite audit used core main `77708e6` and mobile main
+`53e03d9` (including mobile #111 and preparation #112); its mapping follows.
 
 ## Source audit and requirement mapping
 
@@ -27,7 +29,7 @@ A4 sequence vectors and their versions are unchanged.
 | Both `TelemetryManager` files, `telemetry/NativeTelemetryOutbox.kt`, `android/punchbridge/telemetry_binding.go` | Existing `clienttelemetry.Outbox` already owns migration/fsync/repair/locking/batching. `MobileHost.Outbox` borrows that exact process-owned instance; Engine owns sessions/heartbeats/uploads. Existing `EnqueueBatch` is the supported durable migration acknowledgement. | `BorrowedOutboxKeepsSingleLockAndLegacyCopy`, `IdentityTelemetryOwnershipAndRestart`; existing `clienttelemetry/outbox*_test.go` durability/cancellation suites |
 | `ApplicationConnectionAggregator.kt`, native libbox counters | `RunTelemetry` accepts reduced attributed counts and cumulative counters, retires stale runs and captures final Stop samples. Counts are chunked and use shared per-app batching even in the unavailable-store memory fallback. | `ReducedCountsSurviveUnavailableStoreFallback`, `IdentityTelemetryOwnershipAndRestart`, `HeartbeatMetadataAndTraffic`, `StatusAcrossRecoverySwitchAndTeardown` |
 | Native platform/device metadata and ADR Track C | `MobileHost.Attributes` supplies current native metadata; protected `app_version`, `platform`, `engine=connectcore`, and `engine_version` identify releases. Other host metadata yields to event attributes on conflict. Metadata is sampled outside engine/manager locks. No global app-version mutation is needed. | `HeartbeatMetadataAndTraffic`, `IdentityTelemetryOwnershipAndRestart`, `WireIdentityForDiscoveryTicketsAndTelemetry`; `clienttelemetry.TestRecordEventAttributesWinExceptReleaseIdentity` |
-| `state/OpenRungStatusStore.kt`, `model/RecentNode.kt`, RN contract | `ActiveConnectionInfo` already exists but cannot be called in a synchronous sink. `State.Details` atomically carries session and credential-free relay ID/name/effective class/transport/front; `RecentNode` adds relay ID/name and mobile deduplicates by relay (including legacy country entries). | `StatusAcrossRecoverySwitchAndTeardown`, `StateRemainsAtomicDuringSlowTeardown` |
+| `state/OpenRungStatusStore.kt`, `model/RecentNode.kt`, RN contract | `ActiveConnectionInfo` already exists but cannot be called in a synchronous sink. `State.Details` atomically carries session and credential-free relay ID/name, geographic `LocationLabel`, effective class/transport/front; mobile `RelayLabel` is geographic or null. `RecentNode` adds relay ID/name and mobile deduplicates by relay (including legacy country entries). | `StatusAcrossRecoverySwitchAndTeardown`, `StateRemainsAtomicDuringSlowTeardown`, `PromoteKeepsAllLocationSurfacesGeographic` |
 
 ## Binding handoff
 
@@ -124,6 +126,15 @@ and must enqueue/copy and return without reentering Engine. Translate the suppli
 `State.Details` and `Recents` on the native queue; no synchronous
 `ActiveConnectionInfo`/`SessionID` query is needed. Non-connected events clear
 relay details; recovery preserves its session; terminal events clear details.
+`State.Details.LocationLabel` contains only city/country (including city-only
+geo). Empty means native UI should use its localized unknown-location string.
+Sanitize location and operator names before display. Mobile `State.RelayLabel`
+is null when geo is absent, so null-coalescing consumers retain a fallback.
+`Details.LocationLabel` and recent location labels use empty strings for absent
+geo; all three otherwise carry the same geographic-only value. Operator-name
+and relay-ID fallbacks remain desktop-only. Use
+`Details.LocationLabel` in mobile bindings to keep the purpose explicit, and
+keep the separately supplied `RelayName` distinct from location.
 Polling returns the same complete snapshot as the last state event while
 resource teardown is in progress. Continue B1/B2's event sequence ordering and
 retired-OS-owner filtering. Join Shutdown before replacing the native event
@@ -131,7 +142,51 @@ owner. Use `SetSocketProtector`, `SetDNSServers`, `UpdateNetworkState`,
 `Pause`/`Resume` for existing lifecycle integration; never mutate public options
 while running. Mobile teardown cancels/joins each run’s health worker; Shutdown also joins the heartbeat before final session
 records, then honors the existing bounded terminal-flush contract. Pause does
-not pause the data plane; that remains OS/libbox lifecycle work.
+not pause the data plane; that remains OS/libbox lifecycle work. Android screen
+state is not suspension: do not pause recovery on SCREEN_OFF.
+
+Mobile physical liveness accepts either a neutral HTTPS response or a successful
+broker-front TCP connection. It first sends protected HEAD requests to the
+gstatic/Cloudflare generate_204 endpoints, then falls through to the existing
+protected front dials if neither responds. Neither set is required to be
+reachable: blocked fronts cannot veto a neutral response, and blocked neutral
+hosts cannot veto a reachable front. The dedicated OpenRung tunnel-probe hostname
+is not used. This gate permits recovery; it does not prove tunnel health.
+
+Each neutral request has a five-second total budget (`RelayTCPTimeout`), covering
+DNS, TCP, TLS and response headers. This is not exact Android timeout parity:
+the former Kotlin implementation had separate three-second connect/read budgets
+with DNS outside them. Neutral requests verify TLS, do not follow redirects,
+and send no application identity headers. Any TLS-verified response permits
+recovery. All shared physical HTTP transports (geo, punch coordination and
+liveness) bypass process proxies. Socket-protection refusal permits the ladder
+to surface its terminal local failure instead of waiting for connectivity.
+
+An observed mobile `NetworkState.Up == false` skips physical probes; before the
+first observation, probing remains enabled. Post-teardown outage polls double from
+5 seconds toward a 60-second ceiling, always clipped to the remaining budget.
+With immediate probe failures, no resume, and the default two-minute budget, waits are
+5, 10, 20, 40, then at most 45 seconds; the 60-second plateau is not reached.
+A network epoch wakes the wait immediately and resets backoff, but does not
+renew the budget.
+
+One two-minute budget covers the whole mobile recovery episode, starting when
+health first holds recovery or when a transport death triggers teardown. The
+health hold transfers its budget to the supervisor; punch classification,
+post-teardown waits, and subsequent failed ladders reuse it. All mobile
+transports can retry when the physical network goes down during a ladder, but
+a failed ladder after budget expiry ends with `failover_exhausted`. Expiry
+permits a final ladder attempt; it never grants a new outage hold. The health
+loop releases at its next failed sweep after expiry; waits clip probes and
+timers to the same deadline. This deliberately trades indefinite automatic
+waiting for a terminal error and manual reconnect on a sustained outage.
+
+An actual `Resume` renews the budget so suspended time cannot force immediate
+expiry. The next eligible check evaluates physical connectivity with the renewed
+budget before deciding recovery. Idempotent Resume calls while already running
+do not renew it. Stale down signals or blocked reference hosts alone cannot hold
+CONNECTED/CONNECTING forever. Desktop retains its existing broker-front
+TCP gate and fixed recovery polling without these mobile hold budgets.
 
 Mobile recents retain two distinct relays in the same country. At the audited
 mobile main `53e03d9`, `src/components/RecentsSection.tsx` already keys pills by
@@ -186,9 +241,10 @@ UI change in this PR.
   During health, one unclassified error immediately fails the session; native
   adapters must preserve recognized remote timeout/stage types across the binding.
 - Shared mobile health now preserves native traffic backoff and three-failure
-  gating for classified remote failures only. Physical liveness uses Engine's already-protected broker-front dials
-  instead of native network enumeration/NWPath alone; a network epoch forces an
-  immediate through-tunnel check. Neither is tunnel readiness evidence.
+  gating for classified remote failures only. Physical liveness combines protected
+  neutral HTTPS and broker-front TCP, skips probes on observed mobile down states,
+  and bounds outage holds as described above. A network epoch forces an immediate
+  through-tunnel check on a live direct path. Neither is tunnel readiness evidence.
 - Engine keeps its A4 single session across automatic recovery and its ranked,
   failed-relay-demoted ladder. Native reconnects can create replacement sessions;
   B2/B3 must use Engine's session identity for counters/events and compare Track C
@@ -202,7 +258,15 @@ UI change in this PR.
 
 ## Validation and remaining acceptance
 
-Local validation on macOS arm64 / Go 1.26.4:
+The v0.6.1 recovery/location correction is covered by the full `connectcore`
+race suite and vet, including both reachability directions, known-down probe
+suppression, expiry across direct/punch/WSS supervisor recovery, shared health/retry budgets,
+resume after suspension past the old deadline, network-signal wakeup, a response slower than
+three seconds, TLS rejection, cancellation, physical proxy bypass, and mobile
+location projection with desktop fallback compatibility.
+
+The original v0.6.0 prerequisite also received this local validation on macOS
+arm64 / Go 1.26.4:
 
 - `connectcore`: `go test -race ./...`, `go vet ./...`, `go build ./...`.
 - Root, `desktop/`, `desktop-volunteer/`: `go build ./...`, `go test ./...`.

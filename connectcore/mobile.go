@@ -348,8 +348,12 @@ type StateDetails struct {
 	RelayID    string
 	RelayName  string
 	RelayClass string
-	Transport  string
-	FrontID    string
+	// LocationLabel contains only broker-served city/country, never the operator
+	// name or relay ID. Empty means the platform should localize "Unknown location".
+	// All display text still requires platform control/bidi sanitization.
+	LocationLabel string
+	Transport     string
+	FrontID       string
 }
 
 func (s *Engine) detailsLocked() *StateDetails {
@@ -364,6 +368,7 @@ func (s *Engine) detailsLocked() *StateDetails {
 	if s.core.status == StatusConnected && s.conn != nil && s.conn.active != nil {
 		a := s.conn.active
 		d.RelayID, d.RelayName, d.RelayClass = a.relay.ID, relayName(a.relay), brokerapi.EffectiveNodeClass(a.relay.NodeClass)
+		d.LocationLabel = mobileLocationLabel(a.relay)
 		d.Transport, d.FrontID = a.accessTransport, a.frontID
 	}
 	return d
@@ -472,4 +477,17 @@ func (p *mobileProbeCadence) due(elapsed time.Duration, sent, received int64, pr
 	}
 	p.remaining -= elapsed
 	return failures > 0 || (up && !down) || p.remaining <= 0
+}
+
+// Keep location separate from the operator-controlled relay name and ID.
+// Unlike desktop geoLabel, mobile retains city-only geo and returns empty
+// when geo is absent, allowing the host to localize "Unknown location".
+func mobileLocationLabel(r brokerapi.RelayDescriptor) string {
+	parts := make([]string, 0, 2)
+	for _, part := range []string{r.City, r.Country} {
+		if part = strings.TrimSpace(part); part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, ", ")
 }

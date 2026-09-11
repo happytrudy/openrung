@@ -301,6 +301,8 @@ func writeTempConfig(data []byte) (string, error) {
 
 // geoLabel is the user-facing relay label: "City, Country", else country, else
 // the relay's friendly label. It never returns a raw IP (contract §3).
+// Desktop intentionally ignores city-only geo; mobileLocationLabel instead
+// retains that city and never substitutes an operator name or relay ID.
 func geoLabel(r brokerapi.RelayDescriptor) string {
 	city := strings.TrimSpace(r.City)
 	country := strings.TrimSpace(r.Country)
@@ -318,17 +320,22 @@ func geoLabel(r brokerapi.RelayDescriptor) string {
 
 // recentFrom builds a RecentNode from a relay's broker-served geo. Returns nil
 // when the relay has no country code (nothing tap-to-connect could target).
-func recentFrom(r brokerapi.RelayDescriptor) *RecentNode {
+func recentFrom(r brokerapi.RelayDescriptor, mobile bool) *RecentNode {
 	cc := strings.ToUpper(strings.TrimSpace(r.CountryCode))
 	if cc == "" {
 		return nil
 	}
-	return &RecentNode{
+	node := &RecentNode{
 		CountryCode: cc,
 		Label:       geoLabel(r),
 		Latitude:    r.Latitude,
 		Longitude:   r.Longitude,
 	}
+	if mobile {
+		node.Label = mobileLocationLabel(r)
+		node.RelayID, node.RelayName = r.ID, relayName(r)
+	}
+	return node
 }
 
 // persistPrepend adds node to the front of recents (deduped, capped) and writes
