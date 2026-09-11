@@ -428,22 +428,24 @@ type Engine struct {
 	// platform-hook injection pattern above so ladder tests need no network,
 	// no broker, and no sing-box binary (the tunnel itself is faked through
 	// the exported TunnelRuntime seam).
-	probeTunnel        func(ctx context.Context, proxyPort int) (int64, error)
-	healthProbe        func(ctx context.Context, proxyPort int) error
-	dialRelay          func(ctx context.Context, host string, port int) (int64, error)
-	fetchRelays        func(ctx context.Context, brokerURL string, limit int, clientID, sessionID string) (discovery.Fetch, error)
-	tunnelReady        func(ctx context.Context, proxyPort int) error
-	requestWSSTicket   func(ctx context.Context, brokerURL string, request brokerapi.WSSTicketRequest, clientID, sessionID string) (brokerapi.WSSTicketResponse, error)
-	dialWSS            func(ctx context.Context, rawURL, ticket string) (wssBridge, error)
-	waitWSSRetry       func(ctx context.Context, delay time.Duration) error
-	checkNetworkAlive  func(ctx context.Context, fronts []string) bool
-	lookupGeo          func(ctx context.Context, httpClient *http.Client) map[string]string
-	healthTick         time.Duration      // 0 means HealthProbeInterval
-	heartbeatTick      time.Duration      // 0 means the randomized heartbeat cadence
-	wssTicketBudget    time.Duration      // 0 means wssTicketTotalDeadline
-	punchBreakerConfig punchBreakerConfig // zero means the mobile constants
-	networkRetryDelay  time.Duration      // 0 means networkRecoveryPollInterval
-	tunnelReadyLimit   time.Duration      // 0 means TunnelReadyTimeout
+	probeTunnel          func(ctx context.Context, proxyPort int) (int64, error)
+	healthProbe          func(ctx context.Context, proxyPort int) error
+	dialRelay            func(ctx context.Context, host string, port int) (int64, error)
+	fetchRelays          func(ctx context.Context, brokerURL string, limit int, clientID, sessionID string) (discovery.Fetch, error)
+	tunnelReady          func(ctx context.Context, proxyPort int) error
+	requestWSSTicket     func(ctx context.Context, brokerURL string, request brokerapi.WSSTicketRequest, clientID, sessionID string) (brokerapi.WSSTicketResponse, error)
+	dialWSS              func(ctx context.Context, rawURL, ticket string) (wssBridge, error)
+	waitWSSRetry         func(ctx context.Context, delay time.Duration) error
+	checkNetworkAlive    func(ctx context.Context, fronts []string) bool
+	lookupGeo            func(ctx context.Context, httpClient *http.Client) map[string]string
+	healthTick           time.Duration      // 0 means HealthProbeInterval
+	heartbeatTick        time.Duration      // 0 means the randomized heartbeat cadence
+	wssTicketBudget      time.Duration      // 0 means wssTicketTotalDeadline
+	punchBreakerConfig   punchBreakerConfig // zero means the mobile constants
+	networkRetryDelay    time.Duration      // 0 means networkRecoveryPollInterval
+	networkRecoveryLimit time.Duration      // 0 means mobileNetworkRecoveryLimit
+	physicalLivenessURLs []string           // nil means the fixed neutral mobile endpoints (per-engine test seam)
+	tunnelReadyLimit     time.Duration      // 0 means TunnelReadyTimeout
 }
 
 func (s *Engine) tunnelReadyProbe() func(context.Context, int) error {
@@ -1276,12 +1278,10 @@ func connectMeasurements(res *candidateResult, brokerFetchMS int64) map[string]i
 // publish. Returns false without publishing anything when it bailed.
 func (s *Engine) promote(ctx context.Context, conn *connection, res *candidateResult, brokerFetchMS int64, initial bool) bool {
 	label := geoLabel(res.relay)
-	recent := recentFrom(res.relay)
-	if s.Mobile != nil && recent != nil {
-		recent.RelayID = res.relay.ID
-		recent.RelayName = relayName(res.relay)
-		recent.Label = mobileLocationLabel(res.relay)
+	if s.Mobile != nil {
+		label = mobileLocationLabel(res.relay)
 	}
+	recent := recentFrom(res.relay, s.Mobile != nil)
 	s.appendLog("connected via " + label)
 
 	s.mu.Lock()

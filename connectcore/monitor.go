@@ -15,7 +15,11 @@ import (
 	"github.com/openrung/openrung/connectcore/discovery"
 )
 
-const networkRecoveryPollInterval = 5 * time.Second
+const (
+	networkRecoveryPollInterval  = 5 * time.Second
+	mobileNetworkRecoveryMaxPoll = 60 * time.Second
+	mobileNetworkRecoveryLimit   = 2 * time.Minute
+)
 
 // supervise owns the connected phase: it watches the live tunnel process, a
 // periodic through-tunnel health probe, and the platform network signals, and
@@ -188,7 +192,7 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 		// A punched path's loss feeds the per-relay recovery circuit breaker
 		// (PunchRecoveryCircuitBreaker.kt / .swift via punchbreaker.go). The
 		// counting rule is Android's: a health-probe failure always counts
-		// (its own gate already proved the network alive), an unsolicited
+		// (its gate allowed recovery), an unsolicited
 		// tunnel death counts only when the physical network is up — the
 		// network-alive gate is the engine's active probe, the analog of
 		// OpenRungVpnService.physicalNetworkAlive(). An exempt loss waits for
@@ -197,12 +201,10 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 		// re-ladder, and an opened circuit records punch_fallback and makes
 		// every later punch attempt for this relay skip to the hub.
 		if cur.accessTransport == "punch" {
-			// A proxy-mode health trigger already proved the network alive (its
-			// own gate dialed the fronts before failing over); the TUN-mode
-			// health loop deliberately SKIPS that gate (no reference point
-			// outside the tunnel), so on TUN — the mobile target — the probe
-			// runs here instead, after teardown restored the normal routes. A
-			// physical outage must be an exempt loss, not punch instability.
+			// Desktop proxy health already proved front reachability. Desktop
+			// TUN skips that gate, while mobile's bounded health hold can expire
+			// without proving liveness. Recheck after TUN teardown in both cases:
+			// a physical outage is an exempt loss, not punch instability.
 			counted := (triggerWasHealth && !s.tunMode()) || s.networkAlive(ctx, s.livenessFronts(conn))
 			decision := conn.punchBreaker.onDirectPathLost(cur.relay.ID, time.Now(), counted)
 			if decision.useRelayHub {
@@ -358,10 +360,11 @@ func (s *Engine) reladder(ctx context.Context, conn *connection, port int, targe
 // healthLoop probes end-to-end connectivity through the local proxy on a
 // jittered interval, under the live candidate's context (it dies with it).
 // After HealthFailureThreshold consecutive failures it checks whether the local
-// network is alive at all — by dialing the broker fronts, which are far more
-// available than any single relay and independent of the tunnel. Network alive
+// network is alive at all — via protected neutral HTTPS or broker-front TCP
+// on mobile, and broker-front TCP on desktop. A mobile down observation skips
+// these probes, but a bounded hold still lets the ladder run. Network alive
 // means the tunnel itself is dead: report a failover trigger on failCh. Network
-// down (a wifi blip, sleep) means leave the tunnel alone and keep probing.
+// down (a wifi blip, sleep) holds recovery, up to the mobile wait budget.
 // A kick runs the next sweep immediately (the supervisor sends one on a
 // network epoch a direct path may have survived), and each sweep holds while
 // the engine is paused — resuming runs the held sweep right away.
@@ -384,6 +387,7 @@ func (s *Engine) healthLoopWithProbe(ctx context.Context, port int, fronts []str
 	timer := time.NewTimer(pass)
 	defer timer.Stop()
 	failures := 0
+	var recoveryDeadline time.Time
 	for {
 		forced := false
 		select {
@@ -423,6 +427,7 @@ func (s *Engine) healthLoopWithProbe(ctx context.Context, port int, fronts []str
 				cadence.healthy()
 			}
 			failures = 0
+			recoveryDeadline = time.Time{}
 			s.notify(Notice{Kind: NoticeHealthProbe, Threshold: HealthFailureThreshold})
 			continue
 		}
@@ -447,14 +452,14 @@ func (s *Engine) healthLoopWithProbe(ctx context.Context, port int, fronts []str
 			s.notify(Notice{Kind: NoticeHealthProbe, Failures: notified, Threshold: HealthFailureThreshold})
 			continue
 		}
-		// The network-alive gate needs a reference point outside the tunnel. In
-		// TUN mode there is none: the tunnel owns the default route, so the
-		// broker fronts are reached through the very tunnel under suspicion and
-		// the gate could only ever answer "network down" — which would disable
-		// failover for good. Fail over instead; the recovery pass tears the TUN
-		// down first, which is also what restores the normal network if the
-		// outage turns out to be local.
-		if (!s.tunMode() || s.Mobile != nil) && !s.networkAlive(ctx, fronts) {
+		// Mobile protects physical probes outside the tunnel. Desktop TUN
+		// cannot do that: its default route would send front dials through the
+		// suspect tunnel, disabling failover. Skip the gate for desktop TUN;
+		// its recovery pass restores physical routing by tearing down first.
+		if recoveryDeadline.IsZero() {
+			recoveryDeadline = s.mobileRecoveryDeadline()
+		}
+		if (!s.tunMode() || s.Mobile != nil) && !s.networkAliveBefore(ctx, fronts, recoveryDeadline) {
 			if ctx.Err() != nil {
 				return
 			}
@@ -486,18 +491,24 @@ func sleepFor(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-// networkAlive uses independent neutral HTTPS endpoints on mobile. Broker
-// blocking must permit recovery, not be mistaken for a local internet outage.
-// Desktop retains its existing broker-front TCP gate.
+// networkAlive accepts either neutral HTTPS or broker-front TCP on mobile.
+// Neither set is a prerequisite: either may be regionally blocked. Known-down
+// mobile networks skip I/O; desktop retains its broker-front TCP gate.
 func (s *Engine) networkAlive(ctx context.Context, fronts []string) bool {
+	if ctx.Err() != nil || (s.Mobile != nil && s.physicalNetworkKnownDown()) {
+		return false
+	}
 	if s.checkNetworkAlive != nil {
 		return s.checkNetworkAlive(ctx, fronts)
 	}
-	if s.Mobile != nil {
-		return s.physicalNetworkAlive(ctx, mobileLivenessURLs[:])
+	if s.Mobile != nil && s.physicalNetworkAlive(ctx) {
+		return true
 	}
 	dialer := s.protectedNetDialer(RelayTCPTimeout)
 	for _, addr := range fronts {
+		if ctx.Err() != nil {
+			return false
+		}
 		conn, err := dialer.DialContext(ctx, "tcp", addr)
 		if err == nil {
 			_ = conn.Close()
@@ -522,10 +533,11 @@ func (s *Engine) networkAlive(ctx context.Context, fronts []string) bool {
 // waitForNetworkRecovery prevents a fatal WSS socket caused by Wi-Fi loss or
 // laptop sleep from becoming failover_exhausted. The dead local proxy has
 // already been released; recovery starts a fresh direct-first ladder only once
-// the physical-network liveness gate succeeds again.
+// the physical-network liveness gate succeeds, or the mobile hold expires.
 func (s *Engine) waitForNetworkRecovery(ctx context.Context, conn *connection) bool {
 	fronts := s.livenessFronts(conn)
-	if s.networkAlive(ctx, fronts) {
+	deadline := s.mobileRecoveryDeadline()
+	if s.networkAliveBefore(ctx, fronts, deadline) {
 		return true
 	}
 	if ctx.Err() != nil {
@@ -536,18 +548,21 @@ func (s *Engine) waitForNetworkRecovery(ctx context.Context, conn *connection) b
 	if delay <= 0 {
 		delay = networkRecoveryPollInterval
 	}
-	timer := time.NewTimer(delay)
+	baseDelay := delay
+	timer := time.NewTimer(recoveryWaitDelay(delay, deadline))
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return false
 		case <-timer.C:
+			if s.Mobile != nil {
+				delay = nextMobileRecoveryDelay(delay)
+			}
 		case <-conn.netNotify:
 			// A platform network signal rechecks immediately instead of
-			// waiting out the poll — the dial probe below stays the
-			// authority on "alive", so a signal can accelerate recovery but
-			// never wedge it.
+			// waiting out the poll. Reset backoff for the new physical path.
+			delay = baseDelay
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -558,11 +573,11 @@ func (s *Engine) waitForNetworkRecovery(ctx context.Context, conn *connection) b
 		if !s.awaitResumed(ctx) {
 			return false
 		}
-		if s.networkAlive(ctx, fronts) {
-			s.appendLog("network connectivity restored; starting a fresh direct-first ladder")
+		if s.networkAliveBefore(ctx, fronts, deadline) {
+			s.appendLog("physical-network gate released; starting a fresh direct-first ladder")
 			return true
 		}
-		timer.Reset(delay)
+		timer.Reset(recoveryWaitDelay(delay, deadline))
 	}
 }
 
@@ -612,4 +627,49 @@ func jitter(base time.Duration) time.Duration {
 	}
 	delta := time.Duration(rand.Int63n(int64(base)/2+1)) - base/4
 	return base + delta
+}
+
+// A mobile outage hint must not pin CONNECTED/CONNECTING forever. The budget
+// bounds both health's hold and the post-teardown recovery wait independently.
+func (s *Engine) mobileRecoveryDeadline() time.Time {
+	if s.Mobile == nil {
+		return time.Time{}
+	}
+	budget := s.networkRecoveryLimit
+	if budget <= 0 {
+		budget = mobileNetworkRecoveryLimit
+	}
+	return time.Now().Add(budget)
+}
+
+func (s *Engine) networkAliveBefore(ctx context.Context, fronts []string, deadline time.Time) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	probeCtx := ctx
+	if !deadline.IsZero() {
+		var cancel context.CancelFunc
+		probeCtx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+	alive := s.networkAlive(probeCtx, fronts)
+	if ctx.Err() != nil {
+		return false
+	}
+	if !deadline.IsZero() && !time.Now().Before(deadline) {
+		s.appendLog("physical-network wait budget exhausted; letting the recovery ladder report its result")
+		return true
+	}
+	return alive
+}
+
+func recoveryWaitDelay(delay time.Duration, deadline time.Time) time.Duration {
+	if deadline.IsZero() {
+		return delay
+	}
+	return min(delay, max(0, time.Until(deadline)))
+}
+
+func nextMobileRecoveryDelay(delay time.Duration) time.Duration {
+	return min(2*delay, mobileNetworkRecoveryMaxPoll)
 }

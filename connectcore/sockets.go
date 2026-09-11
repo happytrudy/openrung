@@ -114,9 +114,12 @@ func (s *Engine) protectedNetDialer(timeout time.Duration) *net.Dialer {
 
 // protectedTransport is a default-shaped HTTP transport over a protected
 // dialer, for the engine's plain (non-broker) HTTP: the geo lookup and the
-// hub punch coordination.
+// hub punch coordination, plus mobile physical liveness.
 func protectedTransport(protector wsscore.SocketProtector, dnsServers []string) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Physical geo, punch-coordination, and liveness sockets must not inherit
+	// a process proxy (which may itself point into the captured tunnel).
+	transport.Proxy = nil
 	transport.DialContext = (&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,

@@ -480,6 +480,8 @@ func (p *mobileProbeCadence) due(elapsed time.Duration, sent, received int64, pr
 }
 
 // Keep location separate from the operator-controlled relay name and ID.
+// Unlike desktop geoLabel, mobile retains city-only geo and returns empty
+// when geo is absent, allowing the host to localize "Unknown location".
 func mobileLocationLabel(r brokerapi.RelayDescriptor) string {
 	parts := make([]string, 0, 2)
 	for _, part := range []string{r.City, r.Country} {
