@@ -58,6 +58,7 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 		var triggerReason string
 		transportFailure := false
 		triggerWasHealth := false
+		var recovery *networkRecoveryBudget
 	watchTrigger:
 		for {
 			select {
@@ -104,6 +105,10 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 				}
 				break watchTrigger
 			case probeErr := <-healthFail:
+				var held *healthRecoveryError
+				if errors.As(probeErr, &held) {
+					recovery = held.recovery
+				}
 				if ctx.Err() != nil || s.isDisconnecting(conn) {
 					return "", nil
 				}
@@ -188,6 +193,12 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 		// Let traffic fall back to the normal network during the reconnect gap
 		// instead of blackholing it against the dead loopback port.
 		s.releaseProxy(conn)
+		// One budget for this entire recovery, including punch classification,
+		// outage waits, and retries. A failed ladder after expiry is terminal
+		// for every mobile transport. Carry a preceding health hold forward.
+		if recovery == nil {
+			recovery = s.newRecoveryBudget()
+		}
 
 		// A punched path's loss feeds the per-relay recovery circuit breaker
 		// (PunchRecoveryCircuitBreaker.kt / .swift via punchbreaker.go). The
@@ -205,7 +216,7 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 			// TUN skips that gate, while mobile's bounded health hold can expire
 			// without proving liveness. Recheck after TUN teardown in both cases:
 			// a physical outage is an exempt loss, not punch instability.
-			counted := (triggerWasHealth && !s.tunMode()) || s.networkAlive(ctx, s.livenessFronts(conn))
+			counted := (triggerWasHealth && !s.tunMode()) || s.probeNetworkAliveBefore(ctx, s.livenessFronts(conn), recovery)
 			decision := conn.punchBreaker.onDirectPathLost(cur.relay.ID, time.Now(), counted)
 			if decision.useRelayHub {
 				s.appendLog(fmt.Sprintf("punched path to relay %s is unstable; using the relay hub for the rest of this connection", cur.relay.ID))
@@ -226,7 +237,7 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 			} else if decision.counted && decision.delay > 0 {
 				s.appendLog(fmt.Sprintf("punched path lost %d time(s) in a row; retrying direct in %s", decision.rapidFailures, decision.delay.Round(time.Millisecond)))
 			}
-			if !counted && !s.waitForNetworkRecovery(ctx, conn) {
+			if s.Mobile == nil && !counted && !s.waitForNetworkRecovery(ctx, conn, recovery) {
 				return "", nil
 			}
 			if decision.delay > 0 && !sleepFor(ctx, decision.delay) {
@@ -240,7 +251,7 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 			if !s.awaitResumed(ctx) {
 				return "", nil
 			}
-			if transportFailure && !s.waitForNetworkRecovery(ctx, conn) {
+			if (s.Mobile != nil || transportFailure) && !s.waitForNetworkRecovery(ctx, conn, recovery) {
 				return "", nil
 			}
 			var err error
@@ -251,10 +262,14 @@ func (s *Engine) supervise(ctx context.Context, conn *connection, cur *candidate
 			if ctx.Err() != nil {
 				return "", nil
 			}
-			// If connectivity vanished during a WSS-triggered recovery, return to
-			// the local-outage gate and run another fresh direct-first ladder later.
-			if transportFailure && !s.networkAlive(ctx, s.livenessFronts(conn)) {
-				s.appendLog("network went down during WSS recovery; waiting for connectivity")
+			if _, local := localCandidateErrorStage(err); s.Mobile != nil && local {
+				return "failover_exhausted", err
+			}
+			// Mobile retries share the original budget across every transport.
+			// Once it expires, a failed ladder terminates even if physical probes
+			// still say down. Desktop retains its existing WSS retry policy.
+			if (s.Mobile != nil || transportFailure) && !s.networkAliveBefore(ctx, s.livenessFronts(conn), recovery) {
+				s.appendLog("network went down during recovery; waiting for connectivity")
 				continue
 			}
 			// A recovery that dies after a prior success is a distinct terminal
@@ -387,7 +402,7 @@ func (s *Engine) healthLoopWithProbe(ctx context.Context, port int, fronts []str
 	timer := time.NewTimer(pass)
 	defer timer.Stop()
 	failures := 0
-	var recoveryDeadline time.Time
+	var recovery *networkRecoveryBudget
 	for {
 		forced := false
 		select {
@@ -427,7 +442,7 @@ func (s *Engine) healthLoopWithProbe(ctx context.Context, port int, fronts []str
 				cadence.healthy()
 			}
 			failures = 0
-			recoveryDeadline = time.Time{}
+			recovery = nil
 			s.notify(Notice{Kind: NoticeHealthProbe, Threshold: HealthFailureThreshold})
 			continue
 		}
@@ -456,10 +471,10 @@ func (s *Engine) healthLoopWithProbe(ctx context.Context, port int, fronts []str
 		// cannot do that: its default route would send front dials through the
 		// suspect tunnel, disabling failover. Skip the gate for desktop TUN;
 		// its recovery pass restores physical routing by tearing down first.
-		if recoveryDeadline.IsZero() {
-			recoveryDeadline = s.mobileRecoveryDeadline()
+		if recovery == nil {
+			recovery = s.newRecoveryBudget()
 		}
-		if (!s.tunMode() || s.Mobile != nil) && !s.networkAliveBefore(ctx, fronts, recoveryDeadline) {
+		if (!s.tunMode() || s.Mobile != nil) && !s.networkAliveBefore(ctx, fronts, recovery) {
 			if ctx.Err() != nil {
 				return
 			}
@@ -471,8 +486,14 @@ func (s *Engine) healthLoopWithProbe(ctx context.Context, port int, fronts []str
 			continue
 		}
 		s.notify(Notice{Kind: NoticeHealthProbe, Failures: notified, Threshold: HealthFailureThreshold})
+		failure := fmt.Errorf("tunnel health probe failed %d times: %w", failures, err)
+		if s.Mobile != nil {
+			// Transfer the health hold's budget to the supervisor: teardown and
+			// punch classification must not buy another outage waiting period.
+			failure = &healthRecoveryError{cause: failure, recovery: recovery}
+		}
 		select {
-		case failCh <- fmt.Errorf("tunnel health probe failed %d times: %w", failures, err):
+		case failCh <- failure:
 		default:
 		}
 		return
@@ -534,10 +555,12 @@ func (s *Engine) networkAlive(ctx context.Context, fronts []string) bool {
 // laptop sleep from becoming failover_exhausted. The dead local proxy has
 // already been released; recovery starts a fresh direct-first ladder only once
 // the physical-network liveness gate succeeds, or the mobile hold expires.
-func (s *Engine) waitForNetworkRecovery(ctx context.Context, conn *connection) bool {
+func (s *Engine) waitForNetworkRecovery(ctx context.Context, conn *connection, recovery *networkRecoveryBudget) bool {
+	if !s.awaitResumed(ctx) {
+		return false
+	}
 	fronts := s.livenessFronts(conn)
-	deadline := s.mobileRecoveryDeadline()
-	if s.networkAliveBefore(ctx, fronts, deadline) {
+	if s.networkAliveBefore(ctx, fronts, recovery) {
 		return true
 	}
 	if ctx.Err() != nil {
@@ -549,7 +572,7 @@ func (s *Engine) waitForNetworkRecovery(ctx context.Context, conn *connection) b
 		delay = networkRecoveryPollInterval
 	}
 	baseDelay := delay
-	timer := time.NewTimer(recoveryWaitDelay(delay, deadline))
+	timer := time.NewTimer(recoveryWaitDelay(delay, recovery.currentDeadline(s)))
 	defer timer.Stop()
 	for {
 		select {
@@ -573,11 +596,11 @@ func (s *Engine) waitForNetworkRecovery(ctx context.Context, conn *connection) b
 		if !s.awaitResumed(ctx) {
 			return false
 		}
-		if s.networkAliveBefore(ctx, fronts, deadline) {
+		if s.networkAliveBefore(ctx, fronts, recovery) {
 			s.appendLog("physical-network gate released; starting a fresh direct-first ladder")
 			return true
 		}
-		timer.Reset(recoveryWaitDelay(delay, deadline))
+		timer.Reset(recoveryWaitDelay(delay, recovery.currentDeadline(s)))
 	}
 }
 
@@ -630,7 +653,7 @@ func jitter(base time.Duration) time.Duration {
 }
 
 // A mobile outage hint must not pin CONNECTED/CONNECTING forever. The budget
-// bounds both health's hold and the post-teardown recovery wait independently.
+// covers a health hold and its complete post-teardown recovery together.
 func (s *Engine) mobileRecoveryDeadline() time.Time {
 	if s.Mobile == nil {
 		return time.Time{}
@@ -642,21 +665,55 @@ func (s *Engine) mobileRecoveryDeadline() time.Time {
 	return time.Now().Add(budget)
 }
 
-func (s *Engine) networkAliveBefore(ctx context.Context, fronts []string, deadline time.Time) bool {
-	if ctx.Err() != nil {
-		return false
+// Transfer sole budget ownership from the exiting health worker to supervise.
+// Unwrap preserves the remote failure classifier and telemetry error chain.
+type healthRecoveryError struct {
+	cause    error
+	recovery *networkRecoveryBudget
+}
+
+func (e *healthRecoveryError) Error() string { return e.cause.Error() }
+func (e *healthRecoveryError) Unwrap() error { return e.cause }
+
+// Budgets belong to one recovery, starting at the health hold or teardown, never
+// to an individual poll/retry. Resume renews them so suspended time cannot force
+// recovery without checking the newly available physical network.
+type networkRecoveryBudget struct {
+	deadline    time.Time
+	resumeEpoch uint64
+}
+
+func (s *Engine) newRecoveryBudget() *networkRecoveryBudget {
+	return &networkRecoveryBudget{resumeEpoch: s.currentResumeEpoch(), deadline: s.mobileRecoveryDeadline()}
+}
+
+func (b *networkRecoveryBudget) currentDeadline(s *Engine) time.Time {
+	if epoch := s.currentResumeEpoch(); epoch != b.resumeEpoch {
+		b.deadline = s.mobileRecoveryDeadline()
+		b.resumeEpoch = epoch
 	}
-	probeCtx := ctx
-	if !deadline.IsZero() {
+	return b.deadline
+}
+
+// probeNetworkAliveBefore measures liveness only. In particular expiry is not
+// evidence that a punch loss should count against the relay's circuit breaker.
+func (s *Engine) probeNetworkAliveBefore(ctx context.Context, fronts []string, recovery *networkRecoveryBudget) bool {
+	if deadline := recovery.currentDeadline(s); !deadline.IsZero() {
 		var cancel context.CancelFunc
-		probeCtx, cancel = context.WithDeadline(ctx, deadline)
+		ctx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 	}
-	alive := s.networkAlive(probeCtx, fronts)
+	return s.networkAlive(ctx, fronts)
+}
+
+// networkAliveBefore permits the ladder on liveness OR budget exhaustion.
+// Cancellation always wins; expiry never permits a further outage retry.
+func (s *Engine) networkAliveBefore(ctx context.Context, fronts []string, recovery *networkRecoveryBudget) bool {
+	alive := s.probeNetworkAliveBefore(ctx, fronts, recovery)
 	if ctx.Err() != nil {
 		return false
 	}
-	if !deadline.IsZero() && !time.Now().Before(deadline) {
+	if deadline := recovery.currentDeadline(s); !deadline.IsZero() && !time.Now().Before(deadline) {
 		s.appendLog("physical-network wait budget exhausted; letting the recovery ladder report its result")
 		return true
 	}

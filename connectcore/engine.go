@@ -405,8 +405,9 @@ type Engine struct {
 
 	// pauseMu guards resumedCh: nil while running, non-nil while paused
 	// (closed by Resume). See lifecycle.go.
-	pauseMu   sync.Mutex
-	resumedCh chan struct{}
+	pauseMu     sync.Mutex
+	resumedCh   chan struct{}
+	resumeEpoch uint64 // advances on an actual Resume; renews mobile outage budgets
 
 	// protectorMu guards the mid-life protector replacement and the
 	// host-supplied DNS servers (see SetSocketProtector / SetDNSServers) —
@@ -1282,7 +1283,7 @@ func (s *Engine) promote(ctx context.Context, conn *connection, res *candidateRe
 		label = mobileLocationLabel(res.relay)
 	}
 	recent := recentFrom(res.relay, s.Mobile != nil)
-	s.appendLog("connected via " + label)
+	s.logConnected(label)
 
 	s.mu.Lock()
 	if conn.disconnecting || ctx.Err() != nil {
@@ -1578,8 +1579,16 @@ func (s *Engine) emitStatusLocked(status Status, label labelOp, errOp errorOp) {
 	s.emitLocked()
 }
 
+func (s *Engine) logConnected(label string) {
+	if label == "" {
+		s.appendLog("connected")
+	} else {
+		s.appendLog("connected via " + label)
+	}
+}
+
 func (s *Engine) markConnected(label string, recent *RecentNode) {
-	s.appendLog("connected via " + label)
+	s.logConnected(label)
 	s.mu.Lock()
 	s.markConnectedLocked(label, recent)
 	s.mu.Unlock()
@@ -1591,6 +1600,9 @@ func (s *Engine) markConnectedLocked(label string, recent *RecentNode) {
 	s.core.status = StatusConnected
 	l := label
 	s.core.relayLabel = &l
+	if s.Mobile != nil && label == "" {
+		s.core.relayLabel = nil
+	}
 	s.core.lastError = nil
 	if recent != nil {
 		s.core.recents = s.persistPrepend(s.core.recents, *recent)

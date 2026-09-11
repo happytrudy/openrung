@@ -11,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"fmt"
 	"github.com/openrung/openrung/brokerapi"
+	"github.com/openrung/openrung/connectcore/discovery"
+	"strings"
 )
 
 func TestMobileLivenessAllowsBlockedBrokerWithReachableNeutralEndpoint(t *testing.T) {
@@ -190,7 +193,7 @@ func TestMobileDownStateSkipsAllPhysicalProbesAndHoldExpires(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	conn := &connection{netNotify: make(chan struct{}, 1)}
-	if !s.waitForNetworkRecovery(ctx, conn) {
+	if !s.waitForNetworkRecovery(ctx, conn, s.newRecoveryBudget()) {
 		t.Fatal("down state held the post-teardown gate forever")
 	}
 	if probes.Load() != 0 {
@@ -226,7 +229,7 @@ func TestMobileBlockedProbesCannotHoldHealthOrRecoveryForever(t *testing.T) {
 			cancel()
 			<-done
 		} else {
-			if !s.waitForNetworkRecovery(ctx, &connection{netNotify: make(chan struct{}, 1)}) {
+			if !s.waitForNetworkRecovery(ctx, &connection{netNotify: make(chan struct{}, 1)}, s.newRecoveryBudget()) {
 				t.Fatal("post-teardown gate never permitted recovery")
 			}
 			cancel()
@@ -272,7 +275,7 @@ func TestMobileRecoveryBackoffAndNetworkSignal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	result := make(chan bool, 1)
-	go func() { result <- s.waitForNetworkRecovery(ctx, conn) }()
+	go func() { result <- s.waitForNetworkRecovery(ctx, conn, s.newRecoveryBudget()) }()
 	select {
 	case <-waiting.ready:
 	case <-ctx.Done():
@@ -286,7 +289,7 @@ func TestMobileRecoveryBackoffAndNetworkSignal(t *testing.T) {
 		t.Fatalf("physical checks = %d", probes.Load())
 	}
 	cancel()
-	if s.networkAliveBefore(ctx, nil, time.Now().Add(-time.Second)) {
+	if s.networkAliveBefore(ctx, nil, &networkRecoveryBudget{deadline: time.Now().Add(-time.Second)}) {
 		t.Fatal("expired hold defeated cancellation")
 	}
 }
@@ -300,7 +303,7 @@ func TestMobileRecoveryBudgetCancelsAnInFlightProbe(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if !s.networkAliveBefore(ctx, nil, time.Now().Add(25*time.Millisecond)) || ctx.Err() != nil {
+	if !s.networkAliveBefore(ctx, nil, &networkRecoveryBudget{deadline: time.Now().Add(25 * time.Millisecond)}) || ctx.Err() != nil {
 		t.Fatal("probe outlived the mobile budget or consumed the parent cancellation")
 	}
 }
@@ -328,11 +331,18 @@ func TestMobilePromoteKeepsAllLocationSurfacesGeographic(t *testing.T) {
 				t.Fatal("promotion rejected")
 			}
 			state := sink.last()
+			if mobile && tc.city == "" && strings.Contains(sink.logLines(), "connected via ") {
+				t.Fatal("empty location left an incomplete connected log")
+			}
 			want := tc.desktop // Desktop deliberately keeps city-only fallback behavior.
 			if mobile {
 				want = tc.city
 			}
-			if state.RelayLabel == nil || *state.RelayLabel != want {
+			if mobile && want == "" {
+				if state.RelayLabel != nil {
+					t.Fatalf("missing mobile geo must emit null, got %q", *state.RelayLabel)
+				}
+			} else if state.RelayLabel == nil || *state.RelayLabel != want {
 				t.Fatalf("mobile=%v label=%v want=%q", mobile, state.RelayLabel, want)
 			}
 			if len(state.Recents) != 1 || state.Recents[0].Label != want {
@@ -342,5 +352,113 @@ func TestMobilePromoteKeepsAllLocationSurfacesGeographic(t *testing.T) {
 				t.Fatalf("mobile metadata = %+v", state)
 			}
 		}
+	}
+}
+
+// Exercise the supervisor, not just its gate: an expired WSS wait used to mint
+// another budget after every failed ladder, unlike direct and punched recovery.
+func TestMobileRecoveryExpiryTerminatesEveryTransport(t *testing.T) {
+	for _, transport := range []string{"direct", "punch", accessTransportWSS} {
+		for _, health := range []bool{false, true} {
+			for _, down := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/health=%v/down=%v", transport, health, down), func(t *testing.T) {
+					s := New()
+					s.Mobile = &MobileHost{}
+					sink := &testSink{}
+					s.Sink = sink
+					s.SetMode(ModeTUN)
+					s.networkRecoveryLimit = 20 * time.Millisecond
+					s.networkRetryDelay = time.Millisecond
+					s.healthTick = time.Millisecond
+					s.checkNetworkAlive = func(context.Context, []string) bool { return false }
+					if down {
+						s.UpdateNetworkState(NetworkState{Up: false, Fingerprint: "offline"})
+					}
+					s.healthProbe = func(context.Context, int) error {
+						if health {
+							return errors.New("remote tunnel lost")
+						}
+						return nil
+					}
+					var attempts int
+					outage := errors.New("broker unavailable during outage")
+					s.fetchRelays = func(context.Context, string, int, string, string) (discovery.Fetch, error) {
+						attempts++
+						return discovery.Fetch{}, outage
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					runCtx, stopRun := context.WithCancel(ctx)
+					defer stopRun()
+					runDone := make(chan error, 1)
+					cur := &candidateResult{relay: usableRelay("relay-test", "JP", "Tokyo", "Japan"), accessTransport: transport,
+						ctx: runCtx, cancel: stopRun, runDone: runDone, transportErr: make(chan error, 1)}
+					if !health {
+						if transport == accessTransportWSS {
+							cur.transportErr <- errors.New("WSS socket died")
+						} else {
+							runDone <- errors.New("direct path died")
+						}
+					}
+					conn := &connection{active: cur, netNotify: make(chan struct{}, 1)}
+					stage, err := s.supervise(ctx, conn, cur, 0, RelayTarget{})
+					if health && strings.Contains(sink.logLines(), "the tunnel stopped while the local network is down") {
+						t.Fatal("supervisor started a second outage hold after health exhausted its budget")
+					}
+					if ctx.Err() != nil || stage != "failover_exhausted" || !errors.Is(err, outage) || attempts != 1 {
+						t.Fatalf("recovery: stage=%q err=%v attempts=%d context=%v", stage, err, attempts, ctx.Err())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestMobileResumeRenewsBothOutageBudgets(t *testing.T) {
+	for _, health := range []bool{false, true} {
+		t.Run(fmt.Sprintf("health=%v", health), func(t *testing.T) {
+			s := New()
+			s.Mobile = &MobileHost{}
+			s.networkRecoveryLimit = 30 * time.Millisecond
+			s.networkRetryDelay = time.Millisecond
+			s.healthTick = time.Millisecond
+			entered := make(chan struct{})
+			var probes atomic.Int32
+			s.checkNetworkAlive = func(context.Context, []string) bool {
+				if probes.Add(1) == 1 {
+					s.Pause()
+					close(entered)
+					return false
+				}
+				return true // The physical path returned during suspension.
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			done := make(chan bool, 1)
+			go func() {
+				if health {
+					failed := make(chan error, 1)
+					s.healthLoopWithProbe(ctx, 0, nil, failed, nil, func(context.Context, int) error { return errors.New("tunnel still dead") }, nil)
+					select {
+					case <-failed:
+						done <- true
+					default:
+						done <- false
+					}
+				} else {
+					done <- s.waitForNetworkRecovery(ctx, &connection{netNotify: make(chan struct{}, 1)}, s.newRecoveryBudget())
+				}
+			}()
+			select {
+			case <-entered:
+			case <-ctx.Done():
+				t.Fatal("never entered outage hold")
+			}
+			time.Sleep(60 * time.Millisecond) // Exceed the old deadline while paused.
+			s.Resume()
+			if !<-done || probes.Load() < 2 {
+				t.Fatalf("resume skipped physical liveness: probes=%d", probes.Load())
+			}
+		})
 	}
 }
