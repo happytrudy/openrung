@@ -1280,6 +1280,7 @@ func (s *Engine) promote(ctx context.Context, conn *connection, res *candidateRe
 	if s.Mobile != nil && recent != nil {
 		recent.RelayID = res.relay.ID
 		recent.RelayName = relayName(res.relay)
+		recent.Label = mobileLocationLabel(res.relay)
 	}
 	s.appendLog("connected via " + label)
 

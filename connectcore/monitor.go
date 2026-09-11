@@ -486,13 +486,15 @@ func sleepFor(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-// networkAlive dials the broker fronts to decide whether the local network is
-// up. The fronts (Cloudflare + CloudFront, plus any user override) are highly
-// available and independent of the relay fleet, so unlike dialing the candidate
-// relays this never mistakes a single dead relay for a local outage.
+// networkAlive uses independent neutral HTTPS endpoints on mobile. Broker
+// blocking must permit recovery, not be mistaken for a local internet outage.
+// Desktop retains its existing broker-front TCP gate.
 func (s *Engine) networkAlive(ctx context.Context, fronts []string) bool {
 	if s.checkNetworkAlive != nil {
 		return s.checkNetworkAlive(ctx, fronts)
+	}
+	if s.Mobile != nil {
+		return s.physicalNetworkAlive(ctx, mobileLivenessURLs[:])
 	}
 	dialer := s.protectedNetDialer(RelayTCPTimeout)
 	for _, addr := range fronts {
@@ -520,7 +522,7 @@ func (s *Engine) networkAlive(ctx context.Context, fronts []string) bool {
 // waitForNetworkRecovery prevents a fatal WSS socket caused by Wi-Fi loss or
 // laptop sleep from becoming failover_exhausted. The dead local proxy has
 // already been released; recovery starts a fresh direct-first ladder only once
-// an independent HTTPS broker front is reachable again.
+// the physical-network liveness gate succeeds again.
 func (s *Engine) waitForNetworkRecovery(ctx context.Context, conn *connection) bool {
 	fronts := s.livenessFronts(conn)
 	if s.networkAlive(ctx, fronts) {

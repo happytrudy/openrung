@@ -124,6 +124,11 @@ and must enqueue/copy and return without reentering Engine. Translate the suppli
 `State.Details` and `Recents` on the native queue; no synchronous
 `ActiveConnectionInfo`/`SessionID` query is needed. Non-connected events clear
 relay details; recovery preserves its session; terminal events clear details.
+`State.Details.LocationLabel` contains only city/country (including city-only
+geo). Empty means native UI should use its localized unknown-location string.
+Sanitize location and operator names before display. Do not use legacy
+`RelayLabel`, which may fall back to an operator name or relay ID. Mobile recents
+also keep their location separate from `RelayName`.
 Polling returns the same complete snapshot as the last state event while
 resource teardown is in progress. Continue B1/B2's event sequence ordering and
 retired-OS-owner filtering. Join Shutdown before replacing the native event
@@ -131,7 +136,16 @@ owner. Use `SetSocketProtector`, `SetDNSServers`, `UpdateNetworkState`,
 `Pause`/`Resume` for existing lifecycle integration; never mutate public options
 while running. Mobile teardown cancels/joins each run’s health worker; Shutdown also joins the heartbeat before final session
 records, then honors the existing bounded terminal-flush contract. Pause does
-not pause the data plane; that remains OS/libbox lifecycle work.
+not pause the data plane; that remains OS/libbox lifecycle work. Android screen
+state is not suspension: do not pause recovery on SCREEN_OFF.
+
+Mobile physical liveness probes neutral gstatic/Cloudflare generate_204 endpoints
+with protected HEAD requests, a three-second per-request bound, no redirects,
+no process proxy, and no application identity headers. Any HTTP response permits
+recovery; it does not prove tunnel health. Broker fronts and OpenRung's dedicated
+probe hostname are deliberately excluded: their blocking must not wedge the
+recovery ladder. A socket-protection refusal still permits the ladder to report
+its terminal local failure. Desktop retains its broker-front TCP gate.
 
 Mobile recents retain two distinct relays in the same country. At the audited
 mobile main `53e03d9`, `src/components/RecentsSection.tsx` already keys pills by
