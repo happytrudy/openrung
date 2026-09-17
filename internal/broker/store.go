@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"math"
 	"sync"
 	"time"
 
@@ -22,6 +23,20 @@ var ErrRelayNotFound = errors.New("relay not found")
 // label from being taken over — public relay IDs and endpoints notwithstanding
 // — and lets an orphaned label expire within one lease TTL.
 var ErrNodeClassForbidden = errors.New("registration or heartbeat is not authorized for this relay's node class")
+
+// ErrInvalidRankingWeight is returned by the ranking-weight setters for a
+// value outside [0, 1] (or NaN). The stores validate rather than clamp so an
+// operator's typo surfaces as an error instead of silently draining a relay.
+var ErrInvalidRankingWeight = errors.New("ranking weight must be a number between 0 and 1")
+
+// validateRankingWeight is the single range check both stores apply before
+// persisting an operator ranking weight.
+func validateRankingWeight(weight float64) error {
+	if math.IsNaN(weight) || weight < 0 || weight > 1 {
+		return ErrInvalidRankingWeight
+	}
+	return nil
+}
 
 type RankingMode string
 
@@ -42,6 +57,10 @@ type RelayStore interface {
 	Heartbeat(id, leaseToken, maxClass string, now time.Time, ttl time.Duration) (relay.Descriptor, error)
 	UpdateGeo(id, leaseToken string, geo relay.GeoLocation) error
 	List(time.Time, int) ([]relay.Descriptor, error)
+	// ListRanked is List plus the operator ranking weights the ranking applied,
+	// so page-shaping steps after the sort (the WSS reservation) and the
+	// operator views can honour the same weights without a second read.
+	ListRanked(time.Time, int) ([]relay.Descriptor, map[string]float64, error)
 	// RelayByID resolves one currently active descriptor for relay-bound ticket
 	// issuance. It must never return an expired row.
 	RelayByID(string, time.Time) (relay.Descriptor, error)
@@ -53,6 +72,22 @@ type RelayStore interface {
 	Stats(time.Time) (StoreStats, error)
 	Prune(time.Time) ([]relay.Descriptor, error)
 	RecordRelayTelemetry(context.Context, []TelemetryRecord, time.Time) error
+	// RelayRankingWeights returns every stored operator ranking-weight
+	// override, keyed by relay ID. Relays absent from the map rank at
+	// defaultRankingWeight. Overrides are keyed by the identity-derived relay
+	// ID and are never pruned with descriptors, so a weight set on a relay
+	// survives its lease expiring and its next re-registration.
+	RelayRankingWeights(context.Context) (map[string]float64, error)
+	// SetRelayRankingWeight stores weight for id — ErrInvalidRankingWeight
+	// unless it lies in [0, 1] — and returns the effective weight it replaced
+	// (defaultRankingWeight when the relay had no override). The relay need
+	// not be registered: an operator may pre-drain a relay that is currently
+	// between leases.
+	SetRelayRankingWeight(context.Context, string, float64) (float64, error)
+	// DeleteRelayRankingWeight removes id's override, restoring the default,
+	// and returns the effective weight it replaced. Deleting an absent
+	// override is a successful no-op that returns defaultRankingWeight.
+	DeleteRelayRankingWeight(context.Context, string) (float64, error)
 	Ping(context.Context) error
 	Close() error
 }
@@ -62,7 +97,9 @@ type Store struct {
 	relays       map[string]relay.Descriptor
 	sessions     map[string]relaySessionState
 	observations []relayMetricObservation
-	rankingMode  RankingMode
+	// rankingWeights holds operator overrides only; see RelayRankingWeights.
+	rankingWeights map[string]float64
+	rankingMode    RankingMode
 }
 
 type StoreStats struct {
@@ -77,9 +114,10 @@ func NewStore() *Store {
 
 func NewStoreWithRanking(rankingMode RankingMode) *Store {
 	return &Store{
-		relays:      make(map[string]relay.Descriptor),
-		sessions:    make(map[string]relaySessionState),
-		rankingMode: normalizeRankingMode(rankingMode),
+		relays:         make(map[string]relay.Descriptor),
+		sessions:       make(map[string]relaySessionState),
+		rankingWeights: make(map[string]float64),
+		rankingMode:    normalizeRankingMode(rankingMode),
 	}
 }
 
@@ -232,6 +270,11 @@ func (s *Store) UpdateGeo(id, leaseToken string, geo relay.GeoLocation) error {
 }
 
 func (s *Store) List(now time.Time, limit int) ([]relay.Descriptor, error) {
+	relays, _, err := s.ListRanked(now, limit)
+	return relays, err
+}
+
+func (s *Store) ListRanked(now time.Time, limit int) ([]relay.Descriptor, map[string]float64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -242,13 +285,14 @@ func (s *Store) List(now time.Time, limit int) ([]relay.Descriptor, error) {
 		}
 	}
 
-	sortRelayCandidates(relays, s.metricSnapshotsLocked(now), s.rankingMode)
+	snapshots, weights := s.metricSnapshotsLocked(now)
+	sortRelayCandidates(relays, snapshots, weights, s.rankingMode)
 
 	if limit > 0 && len(relays) > limit {
-		return relays[:limit], nil
+		return relays[:limit], weights, nil
 	}
 
-	return relays, nil
+	return relays, weights, nil
 }
 
 func (s *Store) RelayByID(id string, now time.Time) (relay.Descriptor, error) {
@@ -295,6 +339,9 @@ func (s *Store) Stats(now time.Time) (StoreStats, error) {
 	return stats, nil
 }
 
+// Prune drops expired descriptors and out-of-window metrics. Ranking weights
+// are deliberately left alone: they are operator intent about a relay
+// identity, not lease state, and must still apply when the relay returns.
 func (s *Store) Prune(now time.Time) ([]relay.Descriptor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -319,6 +366,41 @@ func (s *Store) RecordRelayTelemetry(_ context.Context, records []TelemetryRecor
 	}
 	s.pruneMetricsLocked(now.Add(-rankingWindow))
 	return nil
+}
+
+func (s *Store) RelayRankingWeights(context.Context) (map[string]float64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.rankingWeightsLocked(), nil
+}
+
+func (s *Store) SetRelayRankingWeight(_ context.Context, id string, weight float64) (float64, error) {
+	if err := validateRankingWeight(weight); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := rankingWeightFor(s.rankingWeights, id)
+	s.rankingWeights[id] = weight
+	return previous, nil
+}
+
+func (s *Store) DeleteRelayRankingWeight(_ context.Context, id string) (float64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := rankingWeightFor(s.rankingWeights, id)
+	delete(s.rankingWeights, id)
+	return previous, nil
+}
+
+// rankingWeightsLocked copies the override map so callers (and the sort that
+// runs after List releases nothing) never alias store state.
+func (s *Store) rankingWeightsLocked() map[string]float64 {
+	weights := make(map[string]float64, len(s.rankingWeights))
+	for id, weight := range s.rankingWeights {
+		weights[id] = weight
+	}
+	return weights
 }
 
 func (s *Store) Ping(context.Context) error {
@@ -404,7 +486,12 @@ func (s *Store) recordRelayTelemetryLocked(record TelemetryRecord, now time.Time
 	}
 }
 
-func (s *Store) metricSnapshotsLocked(now time.Time) map[string]RelayMetricsSnapshot {
+// metricSnapshotsLocked builds the ranking inputs: the 30-minute telemetry
+// snapshot per relay and, alongside it, the operator ranking-weight overrides.
+// The weights travel as a parallel map rather than a snapshot field because a
+// relay with no telemetry has no snapshot entry at all, and its zero value
+// must not read as weight 0.
+func (s *Store) metricSnapshotsLocked(now time.Time) (map[string]RelayMetricsSnapshot, map[string]float64) {
 	snapshots := make(map[string]RelayMetricsSnapshot)
 	activeAfter := now.Add(-activeSessionTimeout)
 	for _, session := range s.sessions {
@@ -438,7 +525,7 @@ func (s *Store) metricSnapshotsLocked(now time.Time) map[string]RelayMetricsSnap
 		}
 		snapshots[observation.RelayID] = snapshot
 	}
-	return snapshots
+	return snapshots, s.rankingWeightsLocked()
 }
 
 func (s *Store) pruneMetricsLocked(cutoff time.Time) {

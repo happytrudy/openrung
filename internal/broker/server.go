@@ -124,15 +124,23 @@ func NewServer(store RelayStore, cfg Config) http.Handler {
 	if wssIssuer != nil {
 		mux.HandleFunc("POST /api/v1/wss/tickets", rateLimitedBy(wssTicketLimiter, wssTicketRateKey(clientIP), 10, wssTicketHandler(store, wssIssuer)))
 	}
-	// The operational inventory exists only when its dedicated token does, so
-	// an unconfigured broker runs no handler, holds no limiter state, and can
-	// answer nothing but 404 on the path — the same posture as the dashboard
-	// routes. The pattern deliberately carries no method: the handler screens
-	// the method itself, after the credential check, so ServeMux cannot answer
-	// ahead of it (see relayInventoryHandler).
+	// The operational API exists only when its dedicated token does, so an
+	// unconfigured broker runs no handler, holds no limiter state, and can
+	// answer nothing but 404 on these paths — the same posture as the
+	// dashboard routes. The patterns deliberately carry no method: each
+	// handler screens the method itself, after the credential check, so
+	// ServeMux cannot answer ahead of it (see relayInventoryHandler). One
+	// limiter spans the whole operational surface: it is one credential
+	// driven by one operator's tooling, and the budget is per token holder,
+	// not per route.
 	if cfg.APIToken != "" {
-		inventoryLimiter := newIPRateLimiter(inventoryRatePerSecond, inventoryBurst, rateLimiterMaxTrackedIPs)
-		mux.HandleFunc("/admin/api/relays/inventory", rateLimited(inventoryLimiter, clientIP, inventoryRetryAfterSeconds, relayInventoryHandler(store, cfg.APIToken, relaySigner)))
+		operationalLimiter := newIPRateLimiter(inventoryRatePerSecond, inventoryBurst, rateLimiterMaxTrackedIPs)
+		operational := func(next http.HandlerFunc) http.HandlerFunc {
+			return rateLimited(operationalLimiter, clientIP, inventoryRetryAfterSeconds, next)
+		}
+		mux.HandleFunc("/admin/api/relays/inventory", operational(relayInventoryHandler(store, cfg.APIToken, relaySigner)))
+		mux.HandleFunc("/admin/api/relays/weights", operational(relayWeightsListHandler(store, cfg.APIToken)))
+		mux.HandleFunc("/admin/api/relays/{id}/weight", operational(relayWeightHandler(store, cfg.APIToken, clientIP.clientIP)))
 	}
 	mux.HandleFunc("POST /api/v1/telemetry/events", rateLimited(telemetryLimiter, clientIP, 10, telemetryHandler(cfg.TelemetrySink, store, clientIP, relayLedger)))
 	mux.HandleFunc("GET /api/v1/speed-test", rateLimited(speedTestLimiter, clientIP, 30, speedTestHandler(speedTestMaxConcurrent)))
@@ -144,6 +152,8 @@ func NewServer(store RelayStore, cfg Config) http.Handler {
 		dashboard := newDashboardServer(cfg.DashboardToken, querier)
 		dashboard.relayDisplays = relayDisplayResolver(store)
 		dashboard.relayDirectory = store
+		dashboard.relayWeights = store
+		dashboard.clientIP = clientIP.clientIP
 		dashboard.register(mux)
 	}
 
@@ -390,13 +400,13 @@ func listRelaysHandler(store RelayStore, telemetrySink TelemetrySink, clientIP *
 		// Ask both stores for the ranked set, then reserve one already-advertised
 		// per-relay WSS-capable Foundation descriptor in a short page. This never
 		// attaches a shared URL or changes ordering when the page already has one.
-		relays, err := store.List(now, 0)
+		relays, weights, err := store.ListRanked(now, 0)
 		if err != nil {
 			slog.Error("could not list relays", "error", err)
 			writeError(w, http.StatusServiceUnavailable, "could not list relays")
 			return
 		}
-		relays = reserveWSSCandidate(relays, limit)
+		relays = reserveWSSCandidate(relays, limit, weights)
 		s.writeSigned(w, relay.ListResponse{
 			Count:      len(relays),
 			ServerTime: now,
@@ -427,13 +437,13 @@ func listRelaysMirrorHandler(store RelayStore, s signer) http.HandlerFunc {
 		// Same caching rule as the API list: errors must not be cached either.
 		w.Header().Set("Cache-Control", "no-store")
 		now := time.Now().UTC()
-		relays, err := store.List(now, 0)
+		relays, weights, err := store.ListRanked(now, 0)
 		if err != nil {
 			slog.Error("could not list relays for mirror", "error", err)
 			writeError(w, http.StatusServiceUnavailable, "could not list relays")
 			return
 		}
-		relays = reserveWSSCandidate(relays, mirrorRelayLimit)
+		relays = reserveWSSCandidate(relays, mirrorRelayLimit, weights)
 		s.writeSigned(w, relay.ListResponse{
 			Count:      len(relays),
 			ServerTime: now,

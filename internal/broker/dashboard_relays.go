@@ -25,9 +25,10 @@ var relaysHTML []byte
 const maxOfflineRelayRows = 200
 
 // relayDirectoryLister is the one slice of RelayStore the relays panel reads:
-// the currently registered descriptor set. Narrow so tests can fake it.
+// the currently registered descriptor set with the ranking weights applied to
+// it. Narrow so tests can fake it.
 type relayDirectoryLister interface {
-	List(time.Time, int) ([]relay.Descriptor, error)
+	ListRanked(time.Time, int) ([]relay.Descriptor, map[string]float64, error)
 }
 
 // relayTelemetryStats is the telemetry half of the admin relays page: one row
@@ -296,6 +297,11 @@ type relayPanelRow struct {
 	Label     string `json:"label,omitempty"`
 	NodeClass string `json:"node_class,omitempty"`
 	Online    bool   `json:"online"`
+	// RankingWeight is the operator multiplier the broker applies to this
+	// relay's rank (defaultRankingWeight unless overridden). Present on every
+	// row, offline ones included: an override outlives the lease and will
+	// apply the moment the relay re-registers, so the operator must see it.
+	RankingWeight float64 `json:"ranking_weight"`
 	// Registry fields, present on online rows only. Endpoint is the advertised
 	// public host:port — for tunnel relays that is the relay hub, never the
 	// operator's own address — and the geo fields locate the relay's exit.
@@ -331,7 +337,7 @@ type relayPanelRow struct {
 // crashed or expired relay stays visible for the retention window. An online
 // row's broker-attested descriptor class is authoritative; offline rows keep
 // the class retained with their telemetry.
-func buildRelaysPanel(descriptors []relay.Descriptor, stats relayTelemetryStats, now time.Time, window time.Duration) relaysPanelResponse {
+func buildRelaysPanel(descriptors []relay.Descriptor, stats relayTelemetryStats, weights map[string]float64, now time.Time, window time.Duration) relaysPanelResponse {
 	response := relaysPanelResponse{GeneratedAt: now, Window: window.String(), Relays: []relayPanelRow{}}
 	statRows := make(map[string]relayStatRow, len(stats.Relays))
 	for _, row := range stats.Relays {
@@ -346,6 +352,7 @@ func buildRelaysPanel(descriptors []relay.Descriptor, stats relayTelemetryStats,
 			Label:           desc.Label,
 			NodeClass:       desc.NodeClass,
 			Online:          true,
+			RankingWeight:   rankingWeightFor(weights, desc.ID),
 			Endpoint:        net.JoinHostPort(desc.PublicHost, strconv.Itoa(desc.PublicPort)),
 			Transport:       desc.Transport,
 			City:            desc.City,
@@ -387,7 +394,7 @@ func buildRelaysPanel(descriptors []relay.Descriptor, stats relayTelemetryStats,
 		if _, ok := online[statRow.RelayID]; ok {
 			continue
 		}
-		row := relayPanelRow{RelayID: statRow.RelayID, NodeClass: statRow.NodeClass}
+		row := relayPanelRow{RelayID: statRow.RelayID, NodeClass: statRow.NodeClass, RankingWeight: rankingWeightFor(weights, statRow.RelayID)}
 		applyRelayStatRow(&row, statRow)
 		// Totals cover every offline relay; the row cap below bounds only what
 		// the response lists.
@@ -469,9 +476,10 @@ func (d *dashboardServer) relaysPanel(w http.ResponseWriter, r *http.Request) {
 	// same descriptor set both vouches for gap-stamped rows and drives the
 	// merge — a relay cannot be trusted by one and missed by the other.
 	var descriptors []relay.Descriptor
+	var weights map[string]float64
 	if d.relayDirectory != nil {
 		var err error
-		descriptors, err = d.relayDirectory.List(now, 0)
+		descriptors, weights, err = d.relayDirectory.ListRanked(now, 0)
 		if err != nil {
 			slog.Error("could not list relays for dashboard", "error", err)
 			writeError(w, http.StatusInternalServerError, "could not list relays")
@@ -488,5 +496,5 @@ func (d *dashboardServer) relaysPanel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not build relay stats")
 		return
 	}
-	writeJSON(w, http.StatusOK, buildRelaysPanel(descriptors, stats, now, window))
+	writeJSON(w, http.StatusOK, buildRelaysPanel(descriptors, stats, weights, now, window))
 }
