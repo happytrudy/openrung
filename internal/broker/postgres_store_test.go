@@ -93,12 +93,32 @@ func TestPostgresStoreSharesRelayStateAcrossInstances(t *testing.T) {
 		t.Fatalf("second store did not see registered relay: %+v", listed)
 	}
 
-	updated, err := storeB.Heartbeat(desc.ID, desc.LeaseToken, relay.NodeClassVolunteer, now.Add(30*time.Second), time.Minute)
+	updated, err := storeB.Heartbeat(desc.ID, desc.LeaseToken, relay.NodeClassVolunteer, "", now.Add(30*time.Second), time.Minute)
 	if err != nil {
 		t.Fatalf("heartbeat from second store: %v", err)
 	}
 	if !updated.ExpiresAt.Equal(now.Add(90 * time.Second)) {
 		t.Fatalf("unexpected heartbeat expiration: %s", updated.ExpiresAt)
+	}
+	if updated.ClientID != desc.ClientID {
+		t.Fatalf("an empty heartbeat credential changed client_id to %q", updated.ClientID)
+	}
+
+	// This is a legacy identityless row: its tokenless heartbeat must not be
+	// able to change the served credential.
+	legacy, err := storeB.Heartbeat(desc.ID, "", relay.NodeClassVolunteer, "0f5c2f58-5d1e-4f1a-9a52-4e8a5d2b7c11", now.Add(time.Minute), time.Minute)
+	if err != nil {
+		t.Fatalf("legacy heartbeat with credential: %v", err)
+	}
+	if legacy.ClientID != desc.ClientID {
+		t.Fatalf("a legacy heartbeat changed client_id to %q", legacy.ClientID)
+	}
+	served, err := storeA.List(now.Add(time.Minute), 10)
+	if err != nil {
+		t.Fatalf("list relays from first store: %v", err)
+	}
+	if len(served) != 1 || served[0].ClientID != desc.ClientID {
+		t.Fatalf("first store serves %+v, want the registered credential", served)
 	}
 }
 
@@ -165,7 +185,7 @@ func TestPostgresStoreDuplicateEndpointReplacesOldDescriptor(t *testing.T) {
 	if first.ID == second.ID {
 		t.Fatal("expected replacement to receive a new relay ID")
 	}
-	if _, err := store.Heartbeat(first.ID, first.LeaseToken, relay.NodeClassVolunteer, now.Add(2*time.Second), time.Minute); !errors.Is(err, ErrRelayNotFound) {
+	if _, err := store.Heartbeat(first.ID, first.LeaseToken, relay.NodeClassVolunteer, "", now.Add(2*time.Second), time.Minute); !errors.Is(err, ErrRelayNotFound) {
 		t.Fatalf("expected old relay ID to be forgotten, got %v", err)
 	}
 	listed, err := store.List(now.Add(2*time.Second), 10)
@@ -389,7 +409,7 @@ func TestPostgresStoreHeartbeatGuardsFoundationLease(t *testing.T) {
 		t.Fatalf("register foundation relay: %v", err)
 	}
 
-	if _, err := store.Heartbeat(desc.ID, desc.LeaseToken, relay.NodeClassVolunteer, now.Add(time.Second), time.Minute); !errors.Is(err, ErrNodeClassForbidden) {
+	if _, err := store.Heartbeat(desc.ID, desc.LeaseToken, relay.NodeClassVolunteer, "", now.Add(time.Second), time.Minute); !errors.Is(err, ErrNodeClassForbidden) {
 		t.Fatalf("volunteer-class credential heartbeat of foundation relay: err = %v, want ErrNodeClassForbidden", err)
 	}
 	// The refused heartbeat must not have extended the lease: past the
@@ -398,7 +418,7 @@ func TestPostgresStoreHeartbeatGuardsFoundationLease(t *testing.T) {
 		t.Fatalf("foundation relay lease was extended by refused heartbeat: %+v %v", listed, err)
 	}
 
-	updated, err := store.Heartbeat(desc.ID, desc.LeaseToken, relay.NodeClassFoundation, now.Add(30*time.Second), time.Minute)
+	updated, err := store.Heartbeat(desc.ID, desc.LeaseToken, relay.NodeClassFoundation, "", now.Add(30*time.Second), time.Minute)
 	if err != nil {
 		t.Fatalf("foundation-credential heartbeat: %v", err)
 	}
@@ -406,7 +426,7 @@ func TestPostgresStoreHeartbeatGuardsFoundationLease(t *testing.T) {
 		t.Fatalf("heartbeat descriptor node_class = %q, want %q", updated.NodeClass, relay.NodeClassFoundation)
 	}
 
-	if _, err := store.Heartbeat("relay_missing", "", relay.NodeClassFoundation, now, time.Minute); !errors.Is(err, ErrRelayNotFound) {
+	if _, err := store.Heartbeat("relay_missing", "", relay.NodeClassFoundation, "", now, time.Minute); !errors.Is(err, ErrRelayNotFound) {
 		t.Fatalf("missing relay: err = %v, want ErrRelayNotFound", err)
 	}
 }

@@ -526,6 +526,130 @@ func TestHeartbeatRouteRejectsMissingOrMalformedRelays(t *testing.T) {
 	}
 }
 
+// A rotating relay announces each credential on its heartbeat: the directory
+// serves it from that heartbeat on, the response echoes what is now served,
+// a heartbeat without one changes nothing, and an oversized value is refused
+// like an oversized registration field.
+func TestHeartbeatRotatesServedClientID(t *testing.T) {
+	store := NewStore()
+	now := time.Now().UTC()
+	desc, err := store.Register(signedIdentityRequest(t, identityStoreSeedA, nil, now), now, time.Minute)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	server := NewServer(store, Config{SigningSeed: testSigningSeed()})
+
+	heartbeat := func(t *testing.T, body string) (int, relay.HeartbeatResponse, string) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/relays/"+desc.ID+"/heartbeat", strings.NewReader(body)))
+		var resp relay.HeartbeatResponse
+		if recorder.Code == http.StatusOK {
+			if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode heartbeat response: %v", err)
+			}
+		}
+		return recorder.Code, resp, recorder.Body.String()
+	}
+	servedClientID := func(t *testing.T) string {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/relays", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("list relays: %d: %s", recorder.Code, recorder.Body.String())
+		}
+		var out relay.ListResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode relay list: %v", err)
+		}
+		if len(out.Relays) != 1 {
+			t.Fatalf("relay list has %d relays, want 1", len(out.Relays))
+		}
+		return out.Relays[0].ClientID
+	}
+
+	code, resp, body := heartbeat(t, `{"ok":true,"lease_token":"`+desc.LeaseToken+`"}`)
+	if code != http.StatusOK {
+		t.Fatalf("plain heartbeat: %d: %s", code, body)
+	}
+	if resp.ClientID != desc.ClientID {
+		t.Fatalf("plain heartbeat echoed client_id %q, want the registered %q", resp.ClientID, desc.ClientID)
+	}
+	if got := servedClientID(t); got != desc.ClientID {
+		t.Fatalf("directory serves %q before any rotation, want %q", got, desc.ClientID)
+	}
+
+	const rotated = "0f5c2f58-5d1e-4f1a-9a52-4e8a5d2b7c11"
+	code, resp, body = heartbeat(t, `{"ok":true,"lease_token":"`+desc.LeaseToken+`","client_id":"`+rotated+`"}`)
+	if code != http.StatusOK {
+		t.Fatalf("rotating heartbeat: %d: %s", code, body)
+	}
+	if resp.ClientID != rotated {
+		t.Fatalf("rotating heartbeat echoed %q, want %q", resp.ClientID, rotated)
+	}
+	if got := servedClientID(t); got != rotated {
+		t.Fatalf("directory serves %q after rotation, want %q", got, rotated)
+	}
+
+	code, resp, body = heartbeat(t, `{"ok":true,"lease_token":"`+desc.LeaseToken+`"}`)
+	if code != http.StatusOK || resp.ClientID != rotated {
+		t.Fatalf("heartbeat without a credential: %d %q (%s), want 200 echoing %q", code, resp.ClientID, body, rotated)
+	}
+	if got := servedClientID(t); got != rotated {
+		t.Fatalf("directory serves %q after an empty heartbeat, want %q kept", got, rotated)
+	}
+
+	// The JSON escapes below decode to a NUL and an ESC character, so the
+	// handler (not the decoder) is what refuses them. Invalid UTF-8 cannot be
+	// tested here: the decoder has already replaced it with U+FFFD.
+	for name, bad := range map[string]string{
+		"oversized":    strings.Repeat("a", maxRegisterFieldBytes+1),
+		"NUL byte":     "0f5c2f58\\u0000dead",
+		"control char": "0f5c2f58\\u001bdead",
+	} {
+		code, _, body = heartbeat(t, `{"ok":true,"lease_token":"`+desc.LeaseToken+`","client_id":"`+bad+`"}`)
+		if code != http.StatusBadRequest {
+			t.Fatalf("%s client_id: %d: %s, want 400", name, code, body)
+		}
+		if got := servedClientID(t); got != rotated {
+			t.Fatalf("a refused heartbeat (%s) changed the served credential to %q", name, got)
+		}
+	}
+}
+
+// A legacy identityless relay renews without a lease token, which anyone
+// authorized to heartbeat could send for its public ID: a credential on such
+// a heartbeat is ignored and the response reports the unchanged one.
+func TestHeartbeatCannotRotateLegacyRelayCredential(t *testing.T) {
+	store := NewStore()
+	desc, err := store.Register(validRegisterRequest(), time.Now().UTC(), time.Minute)
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	server := NewServer(store, Config{SigningSeed: testSigningSeed()})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/v1/relays/"+desc.ID+"/heartbeat", strings.NewReader(`{"ok":true,"client_id":"0f5c2f58-5d1e-4f1a-9a52-4e8a5d2b7c11"}`)))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("legacy heartbeat: %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var resp relay.HeartbeatResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.ClientID != desc.ClientID {
+		t.Fatalf("response client_id = %q, want the unchanged %q", resp.ClientID, desc.ClientID)
+	}
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/relays", nil))
+	var out relay.ListResponse
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(out.Relays) != 1 || out.Relays[0].ClientID != desc.ClientID {
+		t.Fatalf("directory serves %+v, want the registered credential", out.Relays)
+	}
+}
+
 type stubGeoResolver struct {
 	geo     relay.GeoLocation
 	err     error

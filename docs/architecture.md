@@ -62,6 +62,43 @@ The CLI produces an Xray server config with:
 - Reality transport.
 - Vision flow: `xtls-rprx-vision`.
 - Freedom outbound, meaning the relay is the direct exit.
+- An egress guard: routing rules send any client connection aimed at the
+  relay host's own loopback, the unspecified addresses, or private,
+  link-local and CGNAT ranges to a blackhole outbound (domain destinations
+  are resolved first so the rule sees the address that would be dialed), and
+  refuse the management port below on every address by number. A public
+  relay's clients have no legitimate business on its host or its network,
+  and the port rule is what keeps xray's management API off the data plane
+  regardless of name resolution.
+
+**Rotating credentials.** The VLESS UUID in a relay's directory entry is the
+credential that admits a client, and the directory is public, so a copied
+entry would be a permanent credential if the UUID never changed. A direct-mode
+relay therefore derives a fresh UUID every hour from its identity seed
+(HKDF-SHA256, salted by `OPENRUNG_CREDENTIAL_EPOCH`), accepts the current and
+previous hour's credentials, and announces the current one to the broker in
+its heartbeat `client_id`; the broker serves it from that heartbeat on and
+echoes what it now serves, and only then does the relay retire older
+credentials — never one the broker still reports serving while the broker is
+reachable, so a broker that predates the field simply keeps the
+registration-time credential. After an hour without any successful broker
+contact (the lease and every directory snapshot have long expired by then) the
+relay retires that one too and serves only its current and previous hour, so
+an outage cannot extend a copied credential's life. Xray's
+management API (HandlerService alone, on a loopback inbound that the egress
+guard above makes unreachable from client traffic) applies each change to the
+running process through the bundled binary's `xray api adu`/`rmu`, so no
+session is interrupted and no restart is needed; an already-authenticated
+connection survives its credential's retirement because VLESS checks the
+credential once, at the handshake. A copied directory entry stops admitting
+within two hours of the last heartbeat the broker answered, while a
+legitimate snapshot (bounded by the list's 30-minute `not_after`) never holds
+a credential the relay has already retired. The wire
+is unchanged: same Reality parameters, same server name, only the UUID inside
+the encrypted request rotates. `-credential-rotation=false`
+(`OPENRUNG_CREDENTIAL_ROTATION=off`) keeps one static `-client-id`, which is
+also what tunnel mode always serves — its endpoint is published through the
+hub, which has no rotation channel.
 
 Volunteer-run relays also support a **CGNAT reverse-tunnel mode** for hosts that
 cannot expose a public port; see the Relay Hub section below. Foundation-token
@@ -578,9 +615,12 @@ The broker should treat relay registrations as untrusted input:
   The identity carries no authority beyond ID continuity — classes and
   endpoint protections are enforced exactly as for anonymous registrations.
 
-The current scaffold advertises one generated VLESS client ID per relay process.
-That is acceptable for early private testing, but public versions should issue
-short-lived per-client credentials and push them into Xray dynamically.
+Direct-mode relays rotate their VLESS credential hourly (see the Relay CLI
+section), so a copied directory entry stops admitting within two hours of the
+last broker-confirmed rotation. The
+credential is still shared by every client of a relay; per-client credentials
+that could be revoked individually remain future work, to be built if abuse
+persists across rotations.
 
 ## Open Design Decisions
 

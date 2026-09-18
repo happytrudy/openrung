@@ -223,6 +223,24 @@ docker run --rm --entrypoint xray openrung-relay:latest x25519
 (`x25519` prints the Reality key pair; pick a random 16-hex-char `short-id` and any
 UUID for the client id, or let the first run generate them and copy from the logs.)
 
+**Rotating credentials (default in direct mode).** A direct-mode relay does not
+serve `OPENRUNG_CLIENT_ID`: it derives a fresh VLESS credential every hour from
+its identity seed, applies it to the running xray through the management API
+(loopback-only, and unreachable from client traffic: the relay's routing
+refuses client connections to its own host, private ranges, and the
+management port), and announces it to the broker on its
+heartbeat, so a copied directory entry stops admitting within two hours (a
+credential the broker last confirmed is kept through a broker outage of up to
+an hour, then retired too). A pinned `OPENRUNG_CLIENT_ID` is then ignored (the
+relay logs this once). `-skip-xray-run` always serves the static credential:
+an xray this relay does not run cannot be rotated.
+`OPENRUNG_CREDENTIAL_ROTATION=off` restores the single static credential;
+`OPENRUNG_CREDENTIAL_EPOCH=<any string>` re-keys every derived credential at
+once without changing the relay identity. Rotation needs a broker that
+accepts `client_id` on heartbeat (broker 0.4.0 or later); against an older
+broker the relay keeps its registration-time credential accepted and
+otherwise behaves as before.
+
 ## Run
 
 ### One-line volunteer VPS bring-up

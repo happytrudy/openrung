@@ -81,13 +81,36 @@ func TestHeartbeatExtendsRelayLease(t *testing.T) {
 	}
 
 	heartbeatAt := now.Add(30 * time.Second)
-	updated, err := store.Heartbeat(desc.ID, desc.LeaseToken, relay.NodeClassVolunteer, heartbeatAt, time.Minute)
+	updated, err := store.Heartbeat(desc.ID, desc.LeaseToken, relay.NodeClassVolunteer, "", heartbeatAt, time.Minute)
 	if err != nil {
 		t.Fatalf("heartbeat relay: %v", err)
 	}
 
 	if !updated.ExpiresAt.Equal(heartbeatAt.Add(time.Minute)) {
 		t.Fatalf("expected expiration %s, got %s", heartbeatAt.Add(time.Minute), updated.ExpiresAt)
+	}
+}
+
+// A legacy identityless row renews without a lease token, so a credential on
+// its heartbeat must be ignored: relay IDs are public, and honouring it would
+// let any lease-renewing caller replace the relay's UUID.
+func TestHeartbeatIgnoresClientIDForLegacyRow(t *testing.T) {
+	store := NewStore()
+	now := time.Date(2026, 6, 9, 7, 0, 0, 0, time.UTC)
+
+	desc, err := store.Register(validRegisterRequest(), now, time.Minute)
+	if err != nil {
+		t.Fatalf("register relay: %v", err)
+	}
+	renewed, err := store.Heartbeat(desc.ID, "", relay.NodeClassVolunteer, "0f5c2f58-5d1e-4f1a-9a52-4e8a5d2b7c11", now.Add(30*time.Second), time.Minute)
+	if err != nil {
+		t.Fatalf("legacy heartbeat: %v", err)
+	}
+	if renewed.ClientID != desc.ClientID {
+		t.Fatalf("a tokenless legacy heartbeat changed client_id to %q", renewed.ClientID)
+	}
+	if !renewed.ExpiresAt.Equal(now.Add(90 * time.Second)) {
+		t.Fatalf("legacy lease was not renewed: %s", renewed.ExpiresAt)
 	}
 }
 
@@ -108,7 +131,7 @@ func TestStoreDuplicateEndpointReplacesOldDescriptor(t *testing.T) {
 	if first.ID == second.ID {
 		t.Fatal("expected replacement to receive a new relay ID")
 	}
-	if _, err := store.Heartbeat(first.ID, first.LeaseToken, relay.NodeClassVolunteer, now.Add(2*time.Second), time.Minute); !errors.Is(err, ErrRelayNotFound) {
+	if _, err := store.Heartbeat(first.ID, first.LeaseToken, relay.NodeClassVolunteer, "", now.Add(2*time.Second), time.Minute); !errors.Is(err, ErrRelayNotFound) {
 		t.Fatalf("expected old relay ID to be forgotten, got %v", err)
 	}
 	listed, err := store.List(now.Add(2*time.Second), 10)

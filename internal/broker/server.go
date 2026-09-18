@@ -311,8 +311,16 @@ func heartbeatHandler(store RelayStore, cfg Config, ledger *relayIDLedger) http.
 			return
 		}
 
+		// A rotated credential is bounded and checked exactly like the
+		// registration-time one (it lands in the same column and the same
+		// signed directory): opaque to the broker, but storable printable text.
+		if len(heartbeat.ClientID) > maxRegisterFieldBytes || !storableField(heartbeat.ClientID) {
+			writeError(w, http.StatusBadRequest, "client_id must be at most 128 characters of printable text")
+			return
+		}
+
 		now := time.Now().UTC()
-		desc, err := store.Heartbeat(id, heartbeat.LeaseToken, maxClass, now, cfg.RelayLeaseTTL)
+		desc, err := store.Heartbeat(id, heartbeat.LeaseToken, maxClass, heartbeat.ClientID, now, cfg.RelayLeaseTTL)
 		if errors.Is(err, ErrRelayNotFound) {
 			writeError(w, http.StatusNotFound, "relay not found")
 			return
@@ -335,7 +343,10 @@ func heartbeatHandler(store RelayStore, cfg Config, ledger *relayIDLedger) http.
 		// registered before the broker resolved locations at all).
 		resolveRelayGeo(r.Context(), store, cfg.GeoIP, &desc)
 
-		writeJSON(w, http.StatusOK, relay.HeartbeatResponse{OK: true, ExpiresAt: desc.ExpiresAt})
+		// Echo the credential now being served so a rotating relay can retire
+		// its predecessor only once the directory has moved on (a legacy
+		// identityless registration sees its credential unchanged here).
+		writeJSON(w, http.StatusOK, relay.HeartbeatResponse{OK: true, ExpiresAt: desc.ExpiresAt, ClientID: desc.ClientID})
 	}
 }
 
@@ -522,13 +533,23 @@ func validEndpointHost(host string) bool {
 // CSI) included, not just C0 and DEL.
 func registerTextValid(req relay.RegisterRequest) bool {
 	for _, value := range []string{req.ClientID, req.RealityPublicKey, req.ShortID, req.RelayVersion, req.PunchEndpoint} {
-		if !storableText(value) {
+		if !storableField(value) {
 			return false
 		}
-		for _, r := range value {
-			if unicode.IsControl(r) {
-				return false
-			}
+	}
+	return true
+}
+
+// storableField reports whether a relay-supplied text field can be stored
+// and served: valid UTF-8 without NUL (Postgres text/jsonb refuse it) and
+// without control characters. Registration and heartbeat share it.
+func storableField(value string) bool {
+	if !storableText(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
 		}
 	}
 	return true
