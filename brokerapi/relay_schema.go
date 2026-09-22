@@ -99,6 +99,7 @@ func (f *relayWSSFront) UnmarshalJSON(data []byte) error {
 
 const (
 	ProtocolVLESSRealityVision = "vless-reality-vision"
+	ProtocolHysteria2          = "hysteria2"
 	FlowVision                 = "xtls-rprx-vision"
 	ExitModeDirect             = "direct"
 	ExitModeDedicated          = "dedicated"

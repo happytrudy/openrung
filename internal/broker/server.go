@@ -464,18 +464,18 @@ func validateRegisterRequest(req relay.RegisterRequest) error {
 		return errors.New("public_host must be a DNS hostname or IP address")
 	case req.PublicPort < 1 || req.PublicPort > 65535:
 		return errors.New("public_port must be between 1 and 65535")
-	case req.Protocol != relay.ProtocolVLESSRealityVision:
-		return errors.New("protocol must be vless-reality-vision")
+	case req.Protocol != relay.ProtocolVLESSRealityVision && req.Protocol != relay.ProtocolHysteria2:
+		return errors.New("unsupported relay protocol")
 	case req.ClientID == "" || len(req.ClientID) > maxRegisterFieldBytes:
 		return errors.New("client_id is required and must be at most 128 characters")
-	case req.RealityPublicKey == "" || len(req.RealityPublicKey) > maxRegisterFieldBytes:
-		return errors.New("reality_public_key is required and must be at most 128 characters")
-	case req.ShortID == "" || len(req.ShortID) > maxRegisterFieldBytes:
-		return errors.New("short_id is required and must be at most 128 characters")
+	case req.Protocol == relay.ProtocolVLESSRealityVision && (req.RealityPublicKey == "" || len(req.RealityPublicKey) > maxRegisterFieldBytes):
+		return errors.New("reality_public_key is required and must be at most 128 characters for vless")
+	case req.Protocol == relay.ProtocolVLESSRealityVision && (req.ShortID == "" || len(req.ShortID) > maxRegisterFieldBytes):
+		return errors.New("short_id is required and must be at most 128 characters for vless")
 	case req.ServerName == "" || !validEndpointHost(req.ServerName):
 		return errors.New("server_name must be a DNS hostname or IP address")
-	case req.Flow != relay.FlowVision:
-		return errors.New("flow must be xtls-rprx-vision")
+	case req.Protocol == relay.ProtocolVLESSRealityVision && req.Flow != relay.FlowVision:
+		return errors.New("flow must be xtls-rprx-vision for vless")
 	case req.ExitMode != relay.ExitModeDirect && req.ExitMode != relay.ExitModeDedicated:
 		return errors.New("exit_mode must be direct or dedicated")
 	case req.Transport != "" && req.Transport != relay.TransportDirect && req.Transport != relay.TransportTunnel:

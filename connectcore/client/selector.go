@@ -69,18 +69,14 @@ func ParseRelayFamily(value string) (RelayFamily, error) {
 }
 
 func IsUsableRelay(candidate brokerapi.RelayDescriptor, now time.Time) bool {
-	return candidate.Protocol == brokerapi.ProtocolVLESSRealityVision &&
-		candidate.Flow == brokerapi.FlowVision &&
+	return (candidate.Protocol == brokerapi.ProtocolVLESSRealityVision || candidate.Protocol == brokerapi.ProtocolHysteria2) &&
+		(candidate.Protocol == brokerapi.ProtocolHysteria2 || candidate.Flow == brokerapi.FlowVision) &&
 		candidate.ExitMode == brokerapi.ExitModeDirect &&
 		candidate.ExpiresAt.After(now) &&
 		hasRequiredConnectionFields(candidate)
 }
 
 func hasRequiredConnectionFields(candidate brokerapi.RelayDescriptor) bool {
-	return candidate.PublicHost != "" &&
-		candidate.PublicPort > 0 &&
-		candidate.ClientID != "" &&
-		candidate.RealityPublicKey != "" &&
-		candidate.ShortID != "" &&
-		candidate.ServerName != ""
+	return candidate.PublicHost != "" && candidate.PublicPort > 0 && candidate.ClientID != "" && candidate.ServerName != "" &&
+		(candidate.Protocol == brokerapi.ProtocolHysteria2 || (candidate.RealityPublicKey != "" && candidate.ShortID != ""))
 }

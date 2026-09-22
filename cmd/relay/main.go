@@ -110,10 +110,14 @@ type cliFlags struct {
 	label              string
 	nodeClass          string
 	xrayPath           string
+	singBoxPath        string
+	hysteria2Cert      string
+	hysteria2Key       string
 	listenHost         string
 	listenPort         int
 	publicHost         string
 	publicPort         int
+	protocol           string
 	serverName         string
 	realityDest        string
 	clientID           string
@@ -143,16 +147,20 @@ type cliFlags struct {
 func (f *cliFlags) register(fs *flag.FlagSet, identitySeed string) {
 	fs.BoolVar(&f.showVersion, "version", false, "print relay version and exit")
 	fs.BoolVar(&f.printLabel, "print-label", false, "print one random adjective-noun label and exit; provisioning scripts use this to name a relay from the binary's own vocabulary instead of keeping a copy of the word lists")
-	fs.StringVar(&f.broker, "broker", "http://localhost:8080", "broker base URL")
+	fs.StringVar(&f.broker, "broker", getenvDefault("OPENRUNG_BROKER_URL", "http://localhost:8080"), "broker base URL")
 	fs.StringVar(&f.registrationToken, "registration-token", os.Getenv("OPENRUNG_VOLUNTEER_TOKEN"), "volunteer-class relay registration token")
 	fs.StringVar(&f.label, "label", os.Getenv("OPENRUNG_LABEL"), "human-readable relay label shown in the broker; a random adjective-noun is generated when empty")
 	fs.StringVar(&f.nodeClass, "node-class", os.Getenv("OPENRUNG_NODE_CLASS"), "relay operator class: volunteer (default) or foundation. For a foundation relay prefer -foundation-token, which sets this and forces direct mode / https automatically; a bare -node-class=foundation still needs direct mode, the foundation token as the bearer, and an https broker")
 	fs.StringVar(&f.foundationToken, "foundation-token", os.Getenv("OPENRUNG_FOUNDATION_TOKEN"), "foundation registration token; presenting it runs this as a foundation relay — it forces foundation class, direct mode, an https broker, and redirect refusal, so no separate -node-class is needed")
 	fs.StringVar(&f.xrayPath, "xray", "xray", "path to xray binary")
+	fs.StringVar(&f.singBoxPath, "sing-box", getenvDefault("OPENRUNG_SING_BOX_PATH", "sing-box"), "path to sing-box binary for hysteria2")
+	fs.StringVar(&f.hysteria2Cert, "hysteria2-cert", os.Getenv("OPENRUNG_HYSTERIA2_CERT"), "Hysteria2 TLS certificate path")
+	fs.StringVar(&f.hysteria2Key, "hysteria2-key", os.Getenv("OPENRUNG_HYSTERIA2_KEY"), "Hysteria2 TLS private key path")
 	fs.StringVar(&f.listenHost, "listen-host", "::", "local listen host; with connection logging, :: listens on both IPv6 and IPv4 through the observer")
 	fs.IntVar(&f.listenPort, "listen-port", 443, "local listen port")
 	fs.StringVar(&f.publicHost, "public-host", "", "public hostname or IP clients can reach; defaults to the relay host's first global IPv6 address")
 	fs.IntVar(&f.publicPort, "public-port", 443, "public port clients can reach")
+	fs.StringVar(&f.protocol, "protocol", os.Getenv("OPENRUNG_PROTOCOL"), "relay protocol: vless-reality-vision or hysteria2")
 	fs.StringVar(&f.serverName, "server-name", "www.cloudflare.com", "Reality server name")
 	fs.StringVar(&f.realityDest, "reality-dest", "www.cloudflare.com:443", "Reality dest")
 	fs.StringVar(&f.clientID, "client-id", "", "VLESS client UUID; generated when empty")
@@ -208,29 +216,33 @@ func (f *cliFlags) engineConfig() (engine.Config, error) {
 		configPath = filepath.Join(os.TempDir(), "openrung-xray-config.json")
 	}
 	cfg := engine.Config{
-		BrokerURL:           f.broker,
-		Token:               f.registrationToken,
-		FoundationToken:     f.foundationToken,
-		NodeClass:           f.nodeClass,
-		Label:               f.label,
-		PublicHost:          f.publicHost,
-		PublicPort:          f.publicPort,
-		XrayPath:            f.xrayPath,
-		ListenHost:          f.listenHost,
-		ListenPort:          f.listenPort,
-		Mode:                normalizeMode(f.mode, f.tunnel, f.hubAddr),
-		HubAddr:             f.hubAddr,
-		HubHTTPURL:          f.hubHTTP,
-		HubCertFingerprint:  f.hubCertFingerprint,
-		HubInsecure:         f.hubInsecure,
-		HubPlaintext:        !f.hubTLS,
-		ServerName:          f.serverName,
-		RealityDest:         f.realityDest,
-		MaxSessions:         f.maxSessions,
-		MaxMbps:             f.maxMbps,
-		HeartbeatInterval:   f.heartbeatInterval,
-		WSSFronts:           fronts,
-		ConnectionLogOutput: connectionLog,
+		BrokerURL:            f.broker,
+		Token:                f.registrationToken,
+		FoundationToken:      f.foundationToken,
+		NodeClass:            f.nodeClass,
+		Label:                f.label,
+		PublicHost:           f.publicHost,
+		PublicPort:           f.publicPort,
+		XrayPath:             f.xrayPath,
+		SingBoxPath:          f.singBoxPath,
+		Hysteria2Certificate: f.hysteria2Cert,
+		Hysteria2Key:         f.hysteria2Key,
+		ListenHost:           f.listenHost,
+		ListenPort:           f.listenPort,
+		Mode:                 normalizeMode(f.mode, f.tunnel, f.hubAddr),
+		HubAddr:              f.hubAddr,
+		HubHTTPURL:           f.hubHTTP,
+		HubCertFingerprint:   f.hubCertFingerprint,
+		HubInsecure:          f.hubInsecure,
+		HubPlaintext:         !f.hubTLS,
+		Protocol:             f.protocol,
+		ServerName:           f.serverName,
+		RealityDest:          f.realityDest,
+		MaxSessions:          f.maxSessions,
+		MaxMbps:              f.maxMbps,
+		HeartbeatInterval:    f.heartbeatInterval,
+		WSSFronts:            fronts,
+		ConnectionLogOutput:  connectionLog,
 		Identity: engine.Identity{
 			ClientID:          f.clientID,
 			RealityPrivateKey: f.realityPrivateKey,
@@ -317,6 +329,13 @@ func parseWSSFrontsFlag(raw string) ([]relay.WSSFrontDescriptor, error) {
 		})
 	}
 	return relay.NormalizeWSSFronts(fronts)
+}
+
+func getenvDefault(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func boolEnv(key string) bool {

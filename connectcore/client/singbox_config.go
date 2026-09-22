@@ -225,29 +225,7 @@ func BuildSingBoxConfig(input SingBoxConfigInput) ([]byte, error) {
 			inbound,
 		},
 		"outbounds": []any{
-			map[string]any{
-				"type":            "vless",
-				"tag":             "proxy",
-				"server":          serverHost,
-				"server_port":     serverPort,
-				"uuid":            input.Relay.ClientID,
-				"flow":            input.Relay.Flow,
-				"network":         "tcp",
-				"packet_encoding": "xudp",
-				"tls": map[string]any{
-					"enabled":     true,
-					"server_name": input.Relay.ServerName,
-					"utls": map[string]any{
-						"enabled":     true,
-						"fingerprint": "chrome",
-					},
-					"reality": map[string]any{
-						"enabled":    true,
-						"public_key": input.Relay.RealityPublicKey,
-						"short_id":   input.Relay.ShortID,
-					},
-				},
-			},
+			buildProxyOutbound(input.Relay, serverHost, serverPort),
 			map[string]any{
 				"type": "direct",
 				"tag":  "direct",
@@ -274,6 +252,14 @@ func BuildSingBoxConfig(input SingBoxConfigInput) ([]byte, error) {
 // buildInbound constructs the single inbound for the requested mode. ModeTUN
 // reproduces the original full-device TUN inbound byte-for-byte (including the
 // transport-peer route exclusions); ModeProxy emits a loopback mixed inbound.
+
+func buildProxyOutbound(relay brokerapi.RelayDescriptor, host string, port int) map[string]any {
+	if relay.Protocol == brokerapi.ProtocolHysteria2 {
+		return map[string]any{"type": "hysteria2", "tag": "proxy", "server": host, "server_port": port, "password": relay.ClientID, "tls": map[string]any{"enabled": true, "server_name": relay.ServerName}}
+	}
+	return map[string]any{"type": "vless", "tag": "proxy", "server": host, "server_port": port, "uuid": relay.ClientID, "flow": relay.Flow, "network": "tcp", "packet_encoding": "xudp", "tls": map[string]any{"enabled": true, "server_name": relay.ServerName, "utls": map[string]any{"enabled": true, "fingerprint": "chrome"}, "reality": map[string]any{"enabled": true, "public_key": relay.RealityPublicKey, "short_id": relay.ShortID}}}
+}
+
 func buildInbound(input SingBoxConfigInput, tunnelIPv4Address, tunnelIPv6Address string, mtu int) (map[string]any, error) {
 	if input.Mode == ModeProxy {
 		listen := input.ProxyListenAddress
@@ -660,10 +646,10 @@ func TunnelDNSAddress(tunnelIPv4Address string) (string, error) {
 }
 
 func validateRelayForConfig(candidate brokerapi.RelayDescriptor) error {
-	if candidate.Protocol != brokerapi.ProtocolVLESSRealityVision {
-		return errors.New("relay protocol is not vless-reality-vision")
+	if candidate.Protocol != brokerapi.ProtocolVLESSRealityVision && candidate.Protocol != brokerapi.ProtocolHysteria2 {
+		return errors.New("unsupported relay protocol")
 	}
-	if candidate.Flow != brokerapi.FlowVision {
+	if candidate.Protocol == brokerapi.ProtocolVLESSRealityVision && candidate.Flow != brokerapi.FlowVision {
 		return errors.New("relay flow is not xtls-rprx-vision")
 	}
 	if candidate.ExitMode != brokerapi.ExitModeDirect {

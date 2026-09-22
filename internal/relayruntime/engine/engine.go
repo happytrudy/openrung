@@ -114,8 +114,13 @@ type Config struct {
 	// confirms one specific port, and that port is the one to advertise.
 	// Tunnel mode's endpoint comes from the hub.
 	PublicPort int
-	// XrayPath locates the xray binary. Defaults to "xray" via PATH.
+	// XrayPath locates the VLESS xray binary.
 	XrayPath string
+	// SingBoxPath locates the sing-box binary used by Hysteria2 nodes.
+	SingBoxPath string
+	// Hysteria2 TLS certificate and private key.
+	Hysteria2Certificate string
+	Hysteria2Key         string
 	// ListenHost is the host the direct-mode public listener binds (cmd/relay's
 	// -listen-host): "::" and the aliases "dual"/"both" bind both families, any
 	// other value binds that address alone. Empty keeps the engine's own
@@ -149,6 +154,8 @@ type Config struct {
 	HubInsecure bool
 	// HubPlaintext dials the hub without TLS (in-process tests only).
 	HubPlaintext bool
+	// Protocol selects the relay data-plane protocol.
+	Protocol string
 	// ServerName and RealityDest configure the Reality camouflage target.
 	ServerName  string
 	RealityDest string
@@ -214,6 +221,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.XrayPath == "" {
 		c.XrayPath = "xray"
+	}
+	if c.SingBoxPath == "" {
+		c.SingBoxPath = "sing-box"
 	}
 	if c.ListenPort == 0 {
 		c.ListenPort = 443
@@ -386,6 +396,12 @@ func (c Config) validate() error {
 	case ModeAuto, ModeDirect, ModeTunnel:
 	default:
 		return fmt.Errorf("mode must be auto, direct, or tunnel")
+	}
+	if c.Protocol != "" && c.Protocol != relay.ProtocolVLESSRealityVision && c.Protocol != relay.ProtocolHysteria2 {
+		return fmt.Errorf("unsupported relay protocol %q", c.Protocol)
+	}
+	if c.Protocol == relay.ProtocolHysteria2 && c.Mode == ModeTunnel {
+		return errors.New("hysteria2 currently requires direct mode")
 	}
 	if c.Mode == ModeTunnel && c.HubAddr == "" {
 		return fmt.Errorf("hub address is required in tunnel mode")
@@ -1007,7 +1023,7 @@ func (e *Engine) prepareIdentity(cfg Config) (Identity, error) {
 		id.ShortID = v
 		generated = true
 	}
-	if id.RealityPrivateKey == "" || id.RealityPublicKey == "" {
+	if cfg.Protocol != relay.ProtocolHysteria2 && (id.RealityPrivateKey == "" || id.RealityPublicKey == "") {
 		keyPair, err := relayruntime.GenerateRealityKeyPair(cfg.XrayPath)
 		if err != nil {
 			return Identity{}, err
@@ -1065,6 +1081,39 @@ func (e *Engine) probeClient(cfg Config) *http.Client {
 // identity's ClientID into the config (a rotating session leaves it out and
 // installs every credential at runtime instead).
 func (e *Engine) startXray(ctx context.Context, cfg Config, identity Identity, listenHost string, listenPort int, apiPort int, staticClient bool) (*exec.Cmd, <-chan error, error) {
+	return e.startDataPlane(ctx, cfg, identity, listenHost, listenPort, apiPort, staticClient)
+}
+
+func (e *Engine) startDataPlane(ctx context.Context, cfg Config, identity Identity, listenHost string, listenPort int, apiPort int, staticClient bool) (*exec.Cmd, <-chan error, error) {
+	if cfg.Protocol == relay.ProtocolHysteria2 {
+		if !staticClient {
+			return nil, nil, errors.New("hysteria2 does not support VLESS credential rotation")
+		}
+		config, err := relayruntime.BuildHysteria2Config(relayruntime.Hysteria2ConfigInput{ListenHost: listenHost, ListenPort: listenPort, Password: identity.ClientID, CertificatePath: cfg.Hysteria2Certificate, KeyPath: cfg.Hysteria2Key})
+		if err != nil {
+			return nil, nil, err
+		}
+		configPath := cfg.ConfigPath
+		if configPath == "" {
+			configPath = filepath.Join(cfg.ConfigDir, "openrung-hysteria2.json")
+		}
+		if err := os.WriteFile(configPath, config, 0o600); err != nil {
+			return nil, nil, fmt.Errorf("write hysteria2 config: %w", err)
+		}
+		if cfg.DisableXray {
+			return nil, make(chan error), nil
+		}
+		cmd := exec.CommandContext(ctx, cfg.SingBoxPath, "run", "-c", configPath)
+		relayruntime.ConfigureBackgroundCommand(cmd)
+		cmd.Stdout = e.events.Log
+		cmd.Stderr = e.events.Log
+		if err := cmd.Start(); err != nil {
+			return nil, nil, fmt.Errorf("start sing-box: %w", err)
+		}
+		wait := make(chan error, 1)
+		go func() { wait <- cmd.Wait() }()
+		return cmd, wait, nil
+	}
 	clientID := ""
 	if staticClient {
 		clientID = identity.ClientID
@@ -1186,9 +1235,10 @@ func (e *Engine) runDirectSession(ctx context.Context, broker *relayruntime.Brok
 	}
 
 	wss := len(cfg.WSSFronts) > 0
+	hysteria2 := cfg.Protocol == relay.ProtocolHysteria2
 	var xrayListenHost string
 	var xrayListenPort int
-	if wss {
+	if wss || hysteria2 {
 		// WSS relays bypass the per-connection observer entirely (mirroring
 		// cmd/relay): opaque fallback streams must never create address or
 		// byte-count records, so xray owns the public listener directly and the
@@ -1209,7 +1259,7 @@ func (e *Engine) runDirectSession(ctx context.Context, broker *relayruntime.Brok
 	var credentials *credentialRotation
 	var err error
 	apiPort := 0
-	rotate := !cfg.DisableCredentialRotation
+	rotate := !cfg.DisableCredentialRotation && cfg.Protocol != relay.ProtocolHysteria2
 	if rotate && cfg.DisableXray && e.newXrayUsers == nil {
 		// Nothing here manages the xray that will serve this relay, so a
 		// derived credential would be advertised without anything accepting
@@ -1236,7 +1286,7 @@ func (e *Engine) runDirectSession(ctx context.Context, broker *relayruntime.Brok
 		}
 	}
 
-	xrayCmd, xrayErr, err := e.startXray(ctx, cfg, identity, xrayListenHost, xrayListenPort, apiPort, credentials == nil)
+	xrayCmd, xrayErr, err := e.startDataPlane(ctx, cfg, identity, xrayListenHost, xrayListenPort, apiPort, credentials == nil)
 	if err != nil {
 		return err
 	}
@@ -1252,7 +1302,7 @@ func (e *Engine) runDirectSession(ctx context.Context, broker *relayruntime.Brok
 	}
 
 	var observerErr <-chan error
-	if !wss {
+	if !wss && !hysteria2 {
 		// Per-connection lines include client IPs; unless the caller opted into
 		// console connection logging (ConnectionLogOutput) they go nowhere, and
 		// the engine surfaces aggregate counters instead. The observer writes
@@ -1305,22 +1355,32 @@ func (e *Engine) runDirectSession(ctx context.Context, broker *relayruntime.Brok
 		}
 	}
 	req := relay.RegisterRequest{
-		PublicHost:       publicHost,
-		PublicPort:       cfg.publicPort(),
-		Protocol:         relay.ProtocolVLESSRealityVision,
+		PublicHost: publicHost,
+		PublicPort: cfg.publicPort(),
+		Protocol: func() string {
+			if cfg.Protocol != "" {
+				return cfg.Protocol
+			}
+			return relay.ProtocolVLESSRealityVision
+		}(),
 		ClientID:         registerClientID,
 		RealityPublicKey: identity.RealityPublicKey,
 		ShortID:          identity.ShortID,
 		ServerName:       cfg.ServerName,
-		Flow:             relay.FlowVision,
-		ExitMode:         relay.ExitModeDirect,
-		MaxSessions:      cfg.MaxSessions,
-		MaxMbps:          cfg.MaxMbps,
-		RelayVersion:     cfg.Version,
-		Label:            label,
-		NodeClass:        cfg.NodeClass,
-		Transport:        relay.TransportDirect,
-		WSSFronts:        slices.Clone(cfg.WSSFronts),
+		Flow: func() string {
+			if cfg.Protocol == relay.ProtocolHysteria2 {
+				return ""
+			}
+			return relay.FlowVision
+		}(),
+		ExitMode:     relay.ExitModeDirect,
+		MaxSessions:  cfg.MaxSessions,
+		MaxMbps:      cfg.MaxMbps,
+		RelayVersion: cfg.Version,
+		Label:        label,
+		NodeClass:    cfg.NodeClass,
+		Transport:    relay.TransportDirect,
+		WSSFronts:    slices.Clone(cfg.WSSFronts),
 	}
 	// Every register call — initial and after an expired lease — signs a fresh
 	// proof over the final request fields, so the proof never ages out within
@@ -1560,7 +1620,7 @@ func (e *Engine) runTunnelSession(ctx context.Context, cfg Config, label string,
 		return err
 	}
 
-	xrayCmd, xrayErr, err := e.startXray(sessionCtx, cfg, identity, loopHost, loopPort, 0, true)
+	xrayCmd, xrayErr, err := e.startDataPlane(sessionCtx, cfg, identity, loopHost, loopPort, 0, true)
 	if err != nil {
 		return err
 	}
@@ -1578,14 +1638,19 @@ func (e *Engine) runTunnelSession(ctx context.Context, cfg Config, label string,
 		ShortID:          identity.ShortID,
 		ServerName:       cfg.ServerName,
 		ClientID:         identity.ClientID,
-		Flow:             relay.FlowVision,
-		ExitMode:         relay.ExitModeDirect,
-		MaxSessions:      cfg.MaxSessions,
-		MaxMbps:          cfg.MaxMbps,
-		Label:            label,
-		RelayVersion:     cfg.Version,
-		StreamTyping:     true,
-		PunchCapable:     cfg.PunchCapable,
+		Flow: func() string {
+			if cfg.Protocol == relay.ProtocolHysteria2 {
+				return ""
+			}
+			return relay.FlowVision
+		}(),
+		ExitMode:     relay.ExitModeDirect,
+		MaxSessions:  cfg.MaxSessions,
+		MaxMbps:      cfg.MaxMbps,
+		Label:        label,
+		RelayVersion: cfg.Version,
+		StreamTyping: true,
+		PunchCapable: cfg.PunchCapable,
 	}
 	client := &tunnel.Client{
 		HubAddr:   cfg.HubAddr,

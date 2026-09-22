@@ -312,3 +312,36 @@ func ParseRealityKeyPair(out []byte) (RealityKeyPair, error) {
 		PublicKey:  string(bytes.TrimSpace(publicMatch[1])),
 	}, nil
 }
+
+// Hysteria2ConfigInput describes a native sing-box Hysteria2 server.
+type Hysteria2ConfigInput struct {
+	ListenHost      string
+	ListenPort      int
+	Password        string
+	CertificatePath string
+	KeyPath         string
+}
+
+// BuildHysteria2Config renders the server-side sing-box configuration used by a
+// Hysteria2 data node. The password is the broker-advertised client_id.
+func BuildHysteria2Config(input Hysteria2ConfigInput) ([]byte, error) {
+	if input.ListenHost == "" {
+		input.ListenHost = "::"
+	}
+	if input.ListenPort < 1 || input.ListenPort > 65535 {
+		return nil, errors.New("listen port must be between 1 and 65535")
+	}
+	if input.Password == "" {
+		return nil, errors.New("hysteria2 password is required")
+	}
+	if input.CertificatePath == "" || input.KeyPath == "" {
+		return nil, errors.New("hysteria2 certificate and key paths are required")
+	}
+	cfg := map[string]any{
+		"log":       map[string]any{"level": "warn"},
+		"inbounds":  []any{map[string]any{"type": "hysteria2", "tag": "proxy", "listen": input.ListenHost, "listen_port": input.ListenPort, "users": []any{map[string]any{"password": input.Password}}, "tls": map[string]any{"enabled": true, "certificate_path": input.CertificatePath, "key_path": input.KeyPath}}},
+		"outbounds": []any{map[string]any{"type": "direct", "tag": "direct"}, map[string]any{"type": "block", "tag": "block"}},
+		"route":     map[string]any{"final": "direct"},
+	}
+	return json.MarshalIndent(cfg, "", "  ")
+}

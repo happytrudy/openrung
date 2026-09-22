@@ -280,3 +280,18 @@ func assertEgressGuard(t *testing.T, cfg map[string]any, apiPort int) {
 		t.Fatalf("second rule must refuse the API port %d from the relay inbound: %v", apiPort, portRule)
 	}
 }
+
+func TestBuildHysteria2Config(t *testing.T) {
+	raw, err := BuildHysteria2Config(Hysteria2ConfigInput{ListenHost: "::", ListenPort: 443, Password: "secret", CertificatePath: "/tls/fullchain.pem", KeyPath: "/tls/privkey.pem"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	in := cfg["inbounds"].([]any)[0].(map[string]any)
+	if in["type"] != "hysteria2" || in["listen_port"] != float64(443) {
+		t.Fatalf("inbound = %#v", in)
+	}
+}

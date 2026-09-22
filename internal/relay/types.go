@@ -23,6 +23,7 @@ import (
 
 const (
 	ProtocolVLESSRealityVision = brokerapi.ProtocolVLESSRealityVision
+	ProtocolHysteria2          = brokerapi.ProtocolHysteria2
 	FlowVision                 = brokerapi.FlowVision
 	ExitModeDirect             = brokerapi.ExitModeDirect
 	ExitModeDedicated          = brokerapi.ExitModeDedicated
