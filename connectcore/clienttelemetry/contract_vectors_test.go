@@ -14,10 +14,10 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/openrung/openrung/wsscore"
+	"github.com/happytrudy/openrung/wsscore"
 
-	"github.com/openrung/openrung/connectcore/client"
-	"github.com/openrung/openrung/connectcore/contract"
+	"github.com/happytrudy/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/contract"
 )
 
 // classificationVectorsVersion pins the version of

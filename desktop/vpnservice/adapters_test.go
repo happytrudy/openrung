@@ -3,7 +3,7 @@ package vpnservice
 import (
 	"testing"
 
-	"github.com/openrung/openrung/connectcore"
+	"github.com/happytrudy/openrung/connectcore"
 	"openrung/internal/clientstate"
 )
 

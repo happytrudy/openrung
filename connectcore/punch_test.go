@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/punchcore"
 )
 
 func TestPunchBaseURL(t *testing.T) {

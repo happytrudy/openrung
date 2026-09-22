@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // The A2 lifecycle acceptance: Pause silences the engine's periodic activity

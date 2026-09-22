@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // relayDecodeVectorsVersion pins the version of

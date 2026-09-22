@@ -9,10 +9,10 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 
-	"github.com/openrung/openrung/connectcore/clienttelemetry"
-	"github.com/openrung/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/connectcore/clienttelemetry"
+	"github.com/happytrudy/openrung/connectcore/discovery"
 )
 
 const (

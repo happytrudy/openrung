@@ -5,7 +5,7 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/openrung/openrung/connectcore/proxyconfig"
+	"github.com/happytrudy/openrung/connectcore/proxyconfig"
 )
 
 // The proxyconfig package owns the endpoint and its resolution policy; the engine

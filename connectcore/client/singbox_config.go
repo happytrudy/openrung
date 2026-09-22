@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // InboundMode selects how the client captures traffic. The zero value is

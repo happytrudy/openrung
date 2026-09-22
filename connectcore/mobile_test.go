@@ -20,11 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/connectcore/client"
-	"github.com/openrung/openrung/connectcore/clienttelemetry"
-	"github.com/openrung/openrung/connectcore/discovery"
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/clienttelemetry"
+	"github.com/happytrudy/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/punchcore"
 )
 
 const mobileInstallID = "ABCDEF01-2345-4678-9ABC-DEF012345678"

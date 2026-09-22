@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openrung/openrung/connectcore/sudouser"
+	"github.com/happytrudy/openrung/connectcore/sudouser"
 
 	"openrung/internal/proxymode"
 )

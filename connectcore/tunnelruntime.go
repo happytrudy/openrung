@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // TunnelRuntime executes the tunnel core the engine drives (ADR-003 Track A,

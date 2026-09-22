@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/connectcore/clienttelemetry"
-	"github.com/openrung/openrung/connectcore/discovery"
-	"github.com/openrung/openrung/connectcore/proxyconfig"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/connectcore/clienttelemetry"
+	"github.com/happytrudy/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/connectcore/proxyconfig"
 )
 
 // telemetrySink is a loopback broker that records every telemetry event the

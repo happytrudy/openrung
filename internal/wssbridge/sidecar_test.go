@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/openrung/openrung/wsscore"
+	"github.com/happytrudy/openrung/wsscore"
 )
 
 const (

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/connectcore/discovery"
 )
 
 // failingElevation is a host that cannot grant TUN privileges — the CLI's

@@ -13,9 +13,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // Fetch is a successful relay fetch together with the endpoint that served it,

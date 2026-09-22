@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/punchcore"
 )
 
 // punchControlTimeout bounds the hub<->relay punch-control exchange over the

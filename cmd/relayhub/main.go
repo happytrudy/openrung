@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/punchcore"
 
 	"openrung/internal/buildinfo"
 	"openrung/internal/relayhub"

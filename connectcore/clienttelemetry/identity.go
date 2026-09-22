@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/openrung/openrung/connectcore/sudouser"
+	"github.com/happytrudy/openrung/connectcore/sudouser"
 )
 
 const (

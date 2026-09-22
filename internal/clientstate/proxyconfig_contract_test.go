@@ -3,7 +3,7 @@ package clientstate_test
 import (
 	"testing"
 
-	"github.com/openrung/openrung/connectcore/proxyconfig"
+	"github.com/happytrudy/openrung/connectcore/proxyconfig"
 
 	"openrung/internal/clientstate"
 )

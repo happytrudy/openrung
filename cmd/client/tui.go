@@ -11,8 +11,8 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/openrung/openrung/connectcore"
-	"github.com/openrung/openrung/connectcore/proxyconfig"
+	"github.com/happytrudy/openrung/connectcore"
+	"github.com/happytrudy/openrung/connectcore/proxyconfig"
 )
 
 // The interactive client is a pure view over the shared connection engine

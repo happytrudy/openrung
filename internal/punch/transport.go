@@ -18,7 +18,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/punchcore"
 )
 
 // quicConfig is shared by both ends. KeepAlivePeriod mirrors the yamux hub tunnel

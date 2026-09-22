@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // The tests below mirror the assertions in mobile's own generator tests

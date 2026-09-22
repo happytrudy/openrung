@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/connectcore"
-	"github.com/openrung/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/connectcore"
+	"github.com/happytrudy/openrung/connectcore/discovery"
 
 	"openrung/internal/enginepunch"
 )

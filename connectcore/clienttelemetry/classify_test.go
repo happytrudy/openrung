@@ -16,9 +16,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
-	"github.com/openrung/openrung/wsscore"
+	"github.com/happytrudy/openrung/wsscore"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // statusStub is an error carrying an HTTP status, mirroring what the broker

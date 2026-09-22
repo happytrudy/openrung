@@ -1,6 +1,6 @@
 // Package punch is the QUIC session, transport, and bridge layer of OpenRung's
 // NAT hole punching, built on the shared protocol core
-// github.com/openrung/openrung/punchcore (wire format, discovery, and punch
+// github.com/happytrudy/openrung/punchcore (wire format, discovery, and punch
 // mechanics live there; the quic-go transport and per-repo session flows live
 // here).
 package punch
@@ -12,7 +12,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/punchcore"
 )
 
 // quicHandshakeTimeout bounds the QUIC handshake over the freshly punched hole.

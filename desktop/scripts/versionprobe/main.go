@@ -6,7 +6,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 func main() {

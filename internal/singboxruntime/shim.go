@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // Subcommand is the argv verb connectcore's SingBoxRunner invokes on the

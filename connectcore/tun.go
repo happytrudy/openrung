@@ -7,7 +7,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // TUN-mode replacements for the proxy-mode readiness and probe helpers

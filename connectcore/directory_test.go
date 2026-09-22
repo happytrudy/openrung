@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/connectcore/discovery"
 )
 
 func TestDirectoryCacheThrottlesWithinInterval(t *testing.T) {

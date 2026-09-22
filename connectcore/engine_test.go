@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/connectcore/client"
-	"github.com/openrung/openrung/connectcore/clienttelemetry"
-	"github.com/openrung/openrung/connectcore/proxyconfig"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/clienttelemetry"
+	"github.com/happytrudy/openrung/connectcore/proxyconfig"
 )
 
 func usableRelay(id, countryCode, city, country string) brokerapi.RelayDescriptor {

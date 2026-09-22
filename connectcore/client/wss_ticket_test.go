@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 func TestWSSTicketURL(t *testing.T) {

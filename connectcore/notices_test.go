@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/punchcore"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // The typed notices exist so host UIs (the TUI) can render failover, WSS

@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"github.com/openrung/openrung/wsscore"
+	"github.com/happytrudy/openrung/wsscore"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // detailMaxBytes caps failure_detail at the broker's per-attribute value length,

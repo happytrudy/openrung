@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // Capture mode (ADR-001 PR B3). The engine's default is the

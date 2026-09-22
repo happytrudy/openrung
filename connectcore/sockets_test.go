@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/wsscore"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/wsscore"
 )
 
 // recordingProtector is a fake VpnService.protect: it remembers every fd the

@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/wsscore"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/wsscore"
 
-	"github.com/openrung/openrung/connectcore/clienttelemetry"
+	"github.com/happytrudy/openrung/connectcore/clienttelemetry"
 )
 
 // This file owns the socket-control seam (ADR-003 A2): on a host whose tunnel

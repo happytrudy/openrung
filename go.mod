@@ -11,23 +11,23 @@ require (
 	github.com/hashicorp/yamux v0.1.2
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/muesli/termenv v0.16.0
-	github.com/openrung/openrung/brokerapi v0.7.0
-	github.com/openrung/openrung/connectcore v0.0.0
-	github.com/openrung/openrung/punchcore v0.1.0
-	github.com/openrung/openrung/wsscore v0.7.0
+	github.com/happytrudy/openrung/brokerapi v0.7.0
+	github.com/happytrudy/openrung/connectcore v0.0.0
+	github.com/happytrudy/openrung/punchcore v0.1.0
+	github.com/happytrudy/openrung/wsscore v0.7.0
 	github.com/quic-go/quic-go v0.60.0
 	github.com/sagernet/sing v0.9.0-beta.2
 	github.com/sagernet/sing-box v1.14.0-beta.17
 	golang.org/x/sys v0.47.0
 )
 
-replace github.com/openrung/openrung/brokerapi => ./brokerapi
+replace github.com/happytrudy/openrung/brokerapi => ./brokerapi
 
-replace github.com/openrung/openrung/connectcore => ./connectcore
+replace github.com/happytrudy/openrung/connectcore => ./connectcore
 
-replace github.com/openrung/openrung/punchcore => ./punchcore
+replace github.com/happytrudy/openrung/punchcore => ./punchcore
 
-replace github.com/openrung/openrung/wsscore => ./wsscore
+replace github.com/happytrudy/openrung/wsscore => ./wsscore
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect

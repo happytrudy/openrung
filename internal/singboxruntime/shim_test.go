@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // TestRunSubcommandArgvContract pins the argv surface connectcore's

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // Client-side latency ranking for the relay connect ladder. Port of the mobile

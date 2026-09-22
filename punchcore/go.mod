@@ -1,3 +1,3 @@
-module github.com/openrung/openrung/punchcore
+module github.com/happytrudy/openrung/punchcore
 
 go 1.24.0

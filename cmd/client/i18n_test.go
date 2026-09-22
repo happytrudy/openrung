@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openrung/openrung/connectcore"
+	"github.com/happytrudy/openrung/connectcore"
 )
 
 func TestLanguageKeyCyclesWithoutEnteringSettings(t *testing.T) {

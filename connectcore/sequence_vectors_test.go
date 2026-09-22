@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/punchcore"
 
-	"github.com/openrung/openrung/connectcore/contract"
+	"github.com/happytrudy/openrung/connectcore/contract"
 )
 
 // This file is the Go runner for the event-sequence contract vectors (ADR-003

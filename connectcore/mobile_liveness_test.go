@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"fmt"
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/connectcore/discovery"
 	"strings"
 )
 

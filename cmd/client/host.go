@@ -4,8 +4,8 @@ import (
 	"errors"
 	"runtime"
 
-	"github.com/openrung/openrung/connectcore"
-	"github.com/openrung/openrung/connectcore/proxyconfig"
+	"github.com/happytrudy/openrung/connectcore"
+	"github.com/happytrudy/openrung/connectcore/proxyconfig"
 
 	"openrung/internal/clientstate"
 	"openrung/internal/enginepunch"

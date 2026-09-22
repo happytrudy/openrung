@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/client"
 )
 
 // TestRunSubcommandExitsNonzeroOnStartFailure proves the supervision contract

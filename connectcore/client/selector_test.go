@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 func TestSelectRelaySelectsFirstUsableRelay(t *testing.T) {

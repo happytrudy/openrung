@@ -17,8 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/wsscore"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/wsscore"
 )
 
 const (

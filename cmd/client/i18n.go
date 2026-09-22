@@ -5,7 +5,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/openrung/openrung/connectcore"
+	"github.com/happytrudy/openrung/connectcore"
 )
 
 // The TUI ships English, Chinese, and Russian. There is no settings entry for

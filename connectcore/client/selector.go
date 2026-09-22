@@ -4,7 +4,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // Relay-selection sentinels. Kept in this package (not desktop) so

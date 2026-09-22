@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // rankRelay builds a usable candidate whose public host identifies it, so a fake

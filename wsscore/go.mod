@@ -1,4 +1,4 @@
-module github.com/openrung/openrung/wsscore
+module github.com/happytrudy/openrung/wsscore
 
 go 1.24.0
 

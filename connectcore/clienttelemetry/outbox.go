@@ -13,9 +13,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 
-	"github.com/openrung/openrung/connectcore/sudouser"
+	"github.com/happytrudy/openrung/connectcore/sudouser"
 )
 
 // This file is the shared on-disk telemetry outbox (ADR-003 A3): the queue

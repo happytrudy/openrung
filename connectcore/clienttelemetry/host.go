@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // ValidInstallID accepts native UUID text without rewriting its case or value.

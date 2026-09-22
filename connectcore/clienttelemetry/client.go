@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // HTTPClient posts telemetry batches to the broker. It is the CLI analog of the

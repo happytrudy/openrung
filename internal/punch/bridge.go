@@ -12,7 +12,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/punchcore"
 )
 
 // streamAuthTimeout bounds how long the relay waits for a stream's token

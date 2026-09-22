@@ -42,7 +42,7 @@ func TestInjectionSitesUseProvenSymbols(t *testing.T) {
 	proven := map[string]bool{
 		"openrung/internal/buildinfo.version":                        true,
 		"openrung/internal/buildinfo.revision":                       true,
-		"github.com/openrung/openrung/connectcore/client.appVersion": true,
+		"github.com/happytrudy/openrung/connectcore/client.appVersion": true,
 	}
 
 	files, err := filepath.Glob(filepath.Join("..", "..", "deploy", "*", "Dockerfile"))

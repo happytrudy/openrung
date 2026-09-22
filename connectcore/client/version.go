@@ -3,7 +3,7 @@ package client
 // appVersion is the host application version reported in telemetry and the
 // X-OpenRung-App-Version header. In-repo builds inject it at link time:
 //
-//	go build -ldflags "-X github.com/openrung/openrung/connectcore/client.appVersion=0.1.2" ./cmd/client
+//	go build -ldflags "-X github.com/happytrudy/openrung/connectcore/client.appVersion=0.1.2" ./cmd/client
 //
 // The Go linker silently ignores -X for a symbol it cannot resolve, and a
 // consumer of the fetched module cannot practically thread -X through its own

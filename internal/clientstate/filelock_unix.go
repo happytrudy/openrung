@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/openrung/openrung/connectcore/sudouser"
+	"github.com/happytrudy/openrung/connectcore/sudouser"
 )
 
 func withFileLock(path string, fn func() error) error {

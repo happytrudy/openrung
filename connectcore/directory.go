@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 
-	"github.com/openrung/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/connectcore/discovery"
 )
 
 // relayFetcher fetches a relay list from the broker. It abstracts

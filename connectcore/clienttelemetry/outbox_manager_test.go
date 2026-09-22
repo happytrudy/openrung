@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 func testPersistentManager(t *testing.T, directory string, broker *outboxTestBroker) (*Manager, *Outbox) {

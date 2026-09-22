@@ -9,8 +9,8 @@ package enginepunch
 import (
 	"context"
 
-	"github.com/openrung/openrung/connectcore"
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/connectcore"
+	"github.com/happytrudy/openrung/punchcore"
 
 	"openrung/internal/punch"
 )

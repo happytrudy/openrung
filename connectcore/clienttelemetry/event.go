@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // SchemaVersion is the telemetry schema the broker validates against

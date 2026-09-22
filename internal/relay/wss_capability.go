@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openrung/openrung/wsscore"
+	"github.com/happytrudy/openrung/wsscore"
 )
 
 // WSSCapabilitySpecV1 is intentionally separate from IdentitySpecV1. Adding

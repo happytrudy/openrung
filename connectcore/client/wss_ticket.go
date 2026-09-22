@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 // WSSTicketURL resolves the fixed HTTPS broker endpoint. Cleartext is allowed

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 const (

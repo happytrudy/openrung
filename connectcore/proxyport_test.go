@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openrung/openrung/connectcore/proxyconfig"
+	"github.com/happytrudy/openrung/connectcore/proxyconfig"
 )
 
 func TestEnsureProxyPortAvailableReportsStablePortCollision(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 
 	"github.com/hashicorp/yamux"
 
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/punchcore"
 
 	"openrung/internal/punch"
 )

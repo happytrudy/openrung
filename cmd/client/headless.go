@@ -13,11 +13,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 
-	"github.com/openrung/openrung/connectcore"
-	"github.com/openrung/openrung/connectcore/client"
-	"github.com/openrung/openrung/connectcore/discovery"
+	"github.com/happytrudy/openrung/connectcore"
+	"github.com/happytrudy/openrung/connectcore/client"
+	"github.com/happytrudy/openrung/connectcore/discovery"
 )
 
 // The headless subcommands are thin engine drivers (ADR-001 B1): check

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/punchcore"
 
 	"openrung/internal/punch"
 	"openrung/internal/relay"

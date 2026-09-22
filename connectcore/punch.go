@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/openrung/openrung/brokerapi"
-	"github.com/openrung/openrung/punchcore"
+	"github.com/happytrudy/openrung/brokerapi"
+	"github.com/happytrudy/openrung/punchcore"
 
-	"github.com/openrung/openrung/connectcore/clienttelemetry"
+	"github.com/happytrudy/openrung/connectcore/clienttelemetry"
 )
 
 // defaultPunchPort is the hub punch coordinator port assumed when a relay does

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/openrung/openrung/brokerapi"
+	"github.com/happytrudy/openrung/brokerapi"
 )
 
 type discoveryOrderTransport func(*http.Request) (*http.Response, error)
