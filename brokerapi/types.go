@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	cloudflareBrokerHost = "broker.openrung.org"
-	cloudFrontBrokerHost = "d2r7mdpyevvs1m.cloudfront.net"
+	cloudflareBrokerHost = "broker.dubu.host"
+	cloudFrontBrokerHost = ""
 	// The endpoint prefix is deliberately generic. Suppressing SNI keeps this
 	// name out of the ClientHello, but the client still resolves it over
 	// ordinary cleartext DNS, so the name is the one part of this front a
@@ -21,7 +21,7 @@ const (
 	// a keyword match — enough to blocklist the front by pattern, and enough to
 	// mark the user as running this software. Keep it boring; the Azure-assigned
 	// suffix already makes it unguessable.
-	azureBrokerHost = "cdn-edge-cxdnhsg2aadmaubj.z02.azurefd.net"
+	azureBrokerHost = ""
 
 	// DefaultBrokerURL is the Cloudflare broker front. Direct connections to
 	// its standard HTTPS port opportunistically use the embedded ECH config.
@@ -203,7 +203,7 @@ func platformHeaderValue(platform Platform, configured string) string {
 // BrokerCandidates adds Azure's SNI-less retry in a separate final phase.
 // DefaultBrokerURL remains the stable Cloudflare URL for persisted settings.
 func DefaultBrokerURLs() []string {
-	return []string{CloudFrontBrokerURL, AzureBrokerURL, DefaultBrokerURL}
+	return []string{DefaultBrokerURL}
 }
 
 // BrokerCandidates returns a de-duplicated discovery order. A genuine custom

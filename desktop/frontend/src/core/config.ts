@@ -7,7 +7,7 @@
  */
 export const AppConfig = {
   /** HTTPS, Cloudflare-fronted discovery endpoint. Displayed; the Go layer owns the real candidate list. */
-  DEFAULT_BROKER_URL: 'https://broker.openrung.org/',
+  DEFAULT_BROKER_URL: 'https://broker.dubu.host/',
 
   /** Broker max page size for the map directory (matches Go config.DirectoryRelayLimit). */
   DIRECTORY_RELAY_LIMIT: 20,

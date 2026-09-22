@@ -144,7 +144,7 @@ var InternetProbeURLs = []string{
 //
 // Three independent fronts are deployed. AWS CloudFront without SNI gets the
 // first head start, then Azure Front Door with normal SNI joins, followed by the
-// Cloudflare Worker (broker.openrung.org). All three authenticate the exact
+// Configured broker host. The deployment uses one authenticated endpoint.
 // endpoint. Only Azure's no-SNI retry authenticates a shared Azure edge; it runs
 // in a separate phase after every endpoint-bound attempt fails. All fronts
 // proxy the one signing origin and serve signed lists. brokerapi owns this

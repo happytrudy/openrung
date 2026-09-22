@@ -26,7 +26,7 @@ import (
 // Volunteer registration is a write path served by the broker origin behind
 // this hostname; the CDN discovery fronts the client races are read-only and
 // deliberately not used here.
-const DefaultBrokerURL = "https://broker.openrung.org/"
+const DefaultBrokerURL = "https://broker.dubu.host/"
 
 // DefaultHubAddress is the relay hub for NAT'd volunteers. A non-empty value
 // puts every install in auto mode (probe → direct or tunnel), so IPv4/CGNAT
